@@ -67,12 +67,13 @@ custom_components/<domain>/
 
 ### 1.3 Brand Assets
 
-Place `icon.png` (and optionally `logo.png`) directly in the
-integration directory (`custom_components/<domain>/icon.png`). HA
-2024.1+ serves these as brand assets automatically. Alternatively,
-submit branding to the
+Place `icon.png` (and optionally `logo.png`) in a `brand/`
+subdirectory under the integration directory
+(`custom_components/<domain>/brand/icon.png`). HA 2026.3+ serves
+custom integration brand assets from this location via the Brands
+Proxy API. Alternatively, submit branding to the
 [home-assistant/brands](https://github.com/home-assistant/brands)
-repository.
+repository under `custom_integrations/<domain>/`.
 
 ---
 
@@ -323,7 +324,7 @@ them to create a GitHub Release from the tag for HACS visibility.
 | **Single integration** | Only one subdirectory under `custom_components/`. |
 | **`hacs.json` at root** | Must contain at least `"name"`. |
 | **`manifest.json`** | Must contain `domain`, `name`, `version`, `documentation`, `issue_tracker`, `codeowners`. |
-| **Brand assets** | `icon.png` (and optionally `logo.png`) in the integration directory. |
+| **Brand assets** | `icon.png` (and optionally `logo.png`) in `custom_components/<domain>/brand/`. |
 | **At least one release** | For inclusion in the HACS default list, a GitHub Release (not just a tag) is required. |
 
 ### 7.2 GitHub Actions for Validation
@@ -443,18 +444,26 @@ causing silent setup failures.
 "dependencies": ["frontend"],
 ```
 
-### 9.3 HACS Requires a GitHub Release to Download
+### 9.3 HACS Requires a GitHub Release (Not Just a Tag)
 
-Pushing commits to the default branch is not enough — HACS requires a
-**GitHub Release** (with a tag) to download an integration. Without a
-release, HACS shows "No content to download". Always create a release
-after pushing a new version:
+Pushing commits — or even creating and pushing a git tag — is **not
+enough**. HACS requires an actual **GitHub Release** to download an
+integration. A tag alone will not work; HACS uses the GitHub Releases
+API, not the tags API. Without a Release, HACS shows "No content to
+download".
+
+Always create a full GitHub Release after pushing a new version:
 
 ```bash
 git tag v0.1.0
 git push origin v0.1.0
-# Then create a Release on GitHub from the tag
+# THEN go to GitHub → Releases → "Create a new release" from the tag
+# OR use the GitHub CLI:
+gh release create v0.1.0 --title "v0.1.0" --notes "Release notes here"
 ```
+
+**Key point**: `git tag` + `git push origin <tag>` is necessary but not
+sufficient. You MUST also create a GitHub Release from that tag.
 
 ### 9.4 HACS Caches Domain Metadata After Renames
 
@@ -470,12 +479,16 @@ may cache the old domain. After a rename:
 
 ### 9.5 Brand Asset Location
 
-Place `icon.png` and `logo.png` (256×256 minimum) directly in the
-integration directory (`custom_components/<domain>/icon.png`). HA
-2024.1+ serves brand assets from this location. Alternatively, submit
-your brand to the
+Place `icon.png` and `logo.png` (256×256 for icons, landscape for
+logos) in a `brand/` subdirectory under the integration directory:
+`custom_components/<domain>/brand/icon.png`. Do NOT place them
+directly in the integration root — HA will not find them there.
+
+Since HA 2026.3.0, custom integrations serve their own brand assets
+via the Brands Proxy API from this `brand/` folder. Alternatively,
+submit to the
 [home-assistant/brands](https://github.com/home-assistant/brands)
-repository.
+repository under `custom_integrations/<domain>/`.
 
 ### 9.6 Use Current HA HTTP API for Static Paths
 
