@@ -34,6 +34,7 @@ _ha_helpers_event = _make_module("homeassistant.helpers.event")
 _ha_helpers_entity_platform = _make_module("homeassistant.helpers.entity_platform")
 _ha_helpers_device_registry = _make_module("homeassistant.helpers.device_registry")
 _ha_components = _make_module("homeassistant.components")
+_ha_components_http = _make_module("homeassistant.components.http")
 _ha_components_switch = _make_module("homeassistant.components.switch")
 _ha_components_websocket_api = _make_module("homeassistant.components.websocket_api")
 _ha_components_frontend = _make_module("homeassistant.components.frontend")
@@ -82,6 +83,7 @@ class _MockHomeAssistant:
         self.config = MagicMock()
         self.config.time_zone = "UTC"
         self.http = MagicMock()
+        self.http.async_register_static_paths = AsyncMock()
         self.components = MagicMock()
         self.async_create_task = MagicMock()
 
@@ -160,6 +162,15 @@ class _Store:
 
 
 _ha_helpers_storage.Store = _Store
+
+# HTTP stubs
+class _StaticPathConfig:
+    def __init__(self, url_path, path, cache_headers=True):
+        self.url_path = url_path
+        self.path = path
+        self.cache_headers = cache_headers
+
+_ha_components_http.StaticPathConfig = _StaticPathConfig
 
 # Dispatcher stubs
 _dispatcher_callbacks = {}

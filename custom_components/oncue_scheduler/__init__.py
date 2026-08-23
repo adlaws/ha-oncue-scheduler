@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.components.http import StaticPathConfig
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 
@@ -50,9 +51,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.async_start()
 
     # Register frontend panel
-    hass.http.register_static_path(
-        PANEL_URL, str(FRONTEND_DIR / "oncue-scheduler-panel.js"), cache_headers=True
-    )
+    await hass.http.async_register_static_paths([
+        StaticPathConfig(
+            PANEL_URL, str(FRONTEND_DIR / "oncue-scheduler-panel.js"), True
+        )
+    ])
     hass.components.frontend.async_register_built_in_panel(
         component_name="custom",
         sidebar_title=PANEL_TITLE,

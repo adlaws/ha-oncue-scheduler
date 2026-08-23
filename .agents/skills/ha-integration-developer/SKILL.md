@@ -51,9 +51,8 @@ custom_components/<domain>/
 ├── climate.py           # Entity platforms (one file per platform)
 ├── switch.py
 ├── sensor.py
-└── brand/
-    ├── icon.png         # Square icon (min 256×256, preferably 512×512)
-    └── logo.png         # Optional landscape logo
+├── icon.png          # Square icon (min 256×256) — served by HA 2024.1+
+└── logo.png          # Optional logo
 ```
 
 ### 1.2 Mandatory Files
@@ -68,8 +67,10 @@ custom_components/<domain>/
 
 ### 1.3 Brand Assets
 
-HACS requires at least an `icon.png` in a `brand/` directory inside
-the integration folder, or matching branding in the
+Place `icon.png` (and optionally `logo.png`) directly in the
+integration directory (`custom_components/<domain>/icon.png`). HA
+2024.1+ serves these as brand assets automatically. Alternatively,
+submit branding to the
 [home-assistant/brands](https://github.com/home-assistant/brands)
 repository.
 
@@ -322,7 +323,7 @@ them to create a GitHub Release from the tag for HACS visibility.
 | **Single integration** | Only one subdirectory under `custom_components/`. |
 | **`hacs.json` at root** | Must contain at least `"name"`. |
 | **`manifest.json`** | Must contain `domain`, `name`, `version`, `documentation`, `issue_tracker`, `codeowners`. |
-| **Brand assets** | `brand/icon.png` inside the integration directory. |
+| **Brand assets** | `icon.png` (and optionally `logo.png`) in the integration directory. |
 | **At least one release** | For inclusion in the HACS default list, a GitHub Release (not just a tag) is required. |
 
 ### 7.2 GitHub Actions for Validation
@@ -415,9 +416,68 @@ pytest conventions.
 ## Part 9 — Lessons Learned from This Repository
 
 These are specific patterns and pitfalls discovered during the
-development of the `fujitsu_ac_ir` integration in this repository.
+development of integrations in this repository.
 
-### 9.1 Self-Contained Integration Code
+### 9.1 Domain Name Must Not Conflict with Core Integrations
+
+Before choosing a domain name, verify it is not already used by a
+core Home Assistant integration. For example, `oncue` is taken by the
+Kohler OnCue generator integration. A conflicting domain causes the
+custom integration to be silently ignored — it will not appear on the
+Integrations page and HA logs may not show an obvious error.
+
+**Check before naming:**
+Browse <https://www.home-assistant.io/integrations/> or search the
+[HA core repo](https://github.com/home-assistant/core/tree/dev/homeassistant/components)
+for your candidate domain name.
+
+### 9.2 Declare `frontend` Dependency When Registering Panels
+
+If the integration registers a custom frontend panel via
+`hass.components.frontend.async_register_built_in_panel()`, add
+`"frontend"` to the `dependencies` array in `manifest.json`. Without
+this, the integration may load before the frontend component is ready,
+causing silent setup failures.
+
+```json
+"dependencies": ["frontend"],
+```
+
+### 9.3 HACS Requires a GitHub Release to Download
+
+Pushing commits to the default branch is not enough — HACS requires a
+**GitHub Release** (with a tag) to download an integration. Without a
+release, HACS shows "No content to download". Always create a release
+after pushing a new version:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+# Then create a Release on GitHub from the tag
+```
+
+### 9.4 HACS Caches Domain Metadata After Renames
+
+If you rename the integration domain (the directory under
+`custom_components/` and the `domain` field in `manifest.json`), HACS
+may cache the old domain. After a rename:
+
+1. Fully remove the integration from HACS (uninstall + remove the
+   custom repository entry).
+2. Restart HA to clear cached integration metadata.
+3. Re-add the repository as a fresh custom repo in HACS.
+4. Download and restart again.
+
+### 9.5 Brand Asset Location
+
+Place `icon.png` and `logo.png` (256×256 minimum) directly in the
+integration directory (`custom_components/<domain>/icon.png`). HA
+2024.1+ serves brand assets from this location. Alternatively, submit
+your brand to the
+[home-assistant/brands](https://github.com/home-assistant/brands)
+repository.
+
+### 9.6 Self-Contained Integration Code
 
 The HA integration under `custom_components/` duplicates the standalone
 library code rather than importing from `src/`. This is intentional —
@@ -425,48 +485,48 @@ a HACS integration must be a single self-contained directory that works
 when dropped into any HA installation. Never import from paths outside
 `custom_components/<domain>/`.
 
-### 9.2 URL Consistency
+### 9.7 URL Consistency
 
 Ensure `manifest.json` fields `documentation` and `issue_tracker` point
 to the **correct** GitHub repository URL. If the repo is renamed, these
 must be updated. The same applies to HACS installation instructions in
 `README.md` and `DETAILS.md`.
 
-### 9.3 Full State Commands
+### 9.8 Full State Commands
 
 For IR-based integrations (or any stateless protocol), encode the
 **complete device state** in every command rather than tracking
 incremental changes. This avoids state drift between the integration and
 the physical device.
 
-### 9.4 Shared Mutable State Between Entities
+### 9.9 Shared Mutable State Between Entities
 
 When multiple entity platforms (e.g. `climate.py` and `switch.py`) need
 to read and write the same device state, store a shared `@dataclass`
 instance in `hass.data[DOMAIN][entry_id]`. Both platforms reference
 the same object, so changes are immediately visible.
 
-### 9.5 Graceful IR Send Failures
+### 9.10 Graceful IR Send Failures
 
 IR blaster commands can fail silently. Always wrap `hass.services.async_call`
 in a try/except, log the failure, but do **not** crash the entity. The
 user can retry.
 
-### 9.6 Outside-Quiet as a Separate Entity
+### 9.11 Outside-Quiet as a Separate Entity
 
 Features that are boolean toggles orthogonal to the main entity (like
 outside-unit quiet mode) are better exposed as separate `switch` entities
 rather than crammed into the climate entity's attributes. This provides
 a cleaner HA UI and allows automation triggers.
 
-### 9.7 Documentation Typos and Completeness
+### 9.12 Documentation Typos and Completeness
 
 Proofread documentation carefully. Markdown rendering issues (e.g.
 "natire" instead of "nature", missing "not" changing the meaning of a
 sentence) confuse users. Use the `markdown-formatter` skill when editing
 docs.
 
-### 9.8 Broadlink Entity Selection
+### 9.13 Broadlink Entity Selection
 
 Use `EntitySelector(EntitySelectorConfig(domain="remote"))` in the
 config flow to let users pick the correct Broadlink remote entity.
