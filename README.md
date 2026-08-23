@@ -2,9 +2,9 @@
 
 A Home Assistant custom integration that lets you schedule on/off states for any toggleable entity using a visual grid-based UI.
 
-[![HACS Validation](https://github.com/adlaws/ha-oncue-scheduler/actions/workflows/hacs.yml/badge.svg)](https://github.com/adlaws/ha-oncue-scheduler/actions/workflows/hacs.yml)
-[![Hassfest Validation](https://github.com/adlaws/ha-oncue-scheduler/actions/workflows/hassfest.yml/badge.svg)](https://github.com/adlaws/ha-oncue-scheduler/actions/workflows/hassfest.yml)
-[![Tests](https://github.com/adlaws/ha-oncue-scheduler/actions/workflows/tests.yml/badge.svg)](https://github.com/adlaws/ha-oncue-scheduler/actions/workflows/tests.yml)
+[![HACS Validation](https://github.com/adlaws/oncue-scheduler/actions/workflows/hacs.yml/badge.svg)](https://github.com/adlaws/oncue-scheduler/actions/workflows/hacs.yml)
+[![Hassfest Validation](https://github.com/adlaws/oncue-scheduler/actions/workflows/hassfest.yml/badge.svg)](https://github.com/adlaws/oncue-scheduler/actions/workflows/hassfest.yml)
+[![Tests](https://github.com/adlaws/oncue-scheduler/actions/workflows/tests.yml/badge.svg)](https://github.com/adlaws/oncue-scheduler/actions/workflows/tests.yml)
 
 ## Features
 
@@ -27,14 +27,14 @@ A Home Assistant custom integration that lets you schedule on/off states for any
 1. Open HACS in your Home Assistant instance
 2. Go to **Integrations**
 3. Click the three-dot menu and select **Custom repositories**
-4. Add `https://github.com/adlaws/ha-oncue-scheduler` as an **Integration**
+4. Add `https://github.com/adlaws/oncue-scheduler` as an **Integration**
 5. Search for "OnCue" and install it
 6. Restart Home Assistant
 
 ### Manual
 
-1. Download the latest release from the [releases page](https://github.com/adlaws/ha-oncue-scheduler/releases)
-2. Copy the `custom_components/ha_oncue_scheduler/` folder to your Home Assistant `custom_components/` directory
+1. Download the latest release from the [releases page](https://github.com/adlaws/oncue-scheduler/releases)
+2. Copy the `custom_components/oncue_scheduler/` folder to your Home Assistant `custom_components/` directory
 3. Restart Home Assistant
 
 ## Configuration

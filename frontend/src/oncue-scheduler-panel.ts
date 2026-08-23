@@ -5,7 +5,7 @@ import type { Schedule, ScheduleSummary, HomeAssistant } from "./types";
 import "./schedule-list";
 import "./schedule-editor";
 
-@customElement("ha-oncue-scheduler-panel")
+@customElement("oncue-scheduler-panel")
 export class OnCuePanel extends LitElement {
     @property({ attribute: false }) hass!: HomeAssistant;
     @property({ attribute: false }) panel: any;
@@ -131,7 +131,7 @@ export class OnCuePanel extends LitElement {
     private async _loadSchedules() {
         try {
             const result = await this.hass.connection.sendMessagePromise({
-                type: "ha_oncue_scheduler/list",
+                type: "oncue_scheduler/list",
             });
             this._schedules = result.schedules ?? [];
         } catch (err) {
@@ -146,7 +146,7 @@ export class OnCuePanel extends LitElement {
         const id = e.detail.id;
         try {
             const result = await this.hass.connection.sendMessagePromise({
-                type: "ha_oncue_scheduler/get",
+                type: "oncue_scheduler/get",
                 schedule_id: id,
             });
             this._selectedSchedule = result.schedule ?? null;
@@ -170,7 +170,7 @@ export class OnCuePanel extends LitElement {
         if (id) {
             try {
                 const result = await this.hass.connection.sendMessagePromise({
-                    type: "ha_oncue_scheduler/get",
+                    type: "oncue_scheduler/get",
                     schedule_id: id,
                 });
                 this._selectedSchedule = result.schedule ?? null;

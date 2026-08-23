@@ -1,7 +1,7 @@
 """OnCue constants."""
 
-DOMAIN = "ha_oncue_scheduler"
-STORE_KEY = "ha_oncue_scheduler.schedules"
+DOMAIN = "oncue_scheduler"
+STORE_KEY = "oncue_scheduler.schedules"
 STORE_VERSION = 1
 DEFAULT_SLOT_MINUTES = 15
 SLOTS_PER_DAY = 96

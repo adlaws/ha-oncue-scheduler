@@ -17,9 +17,9 @@ async def store_with_schedule(mock_store):
 
 @pytest.mark.asyncio
 async def test_ws_list_schedules(hass, connection, mock_store):
-    from ha_oncue_scheduler.websocket_api import ws_list_schedules
-    from ha_oncue_scheduler.const import DOMAIN
-    from ha_oncue_scheduler import OnCueData
+    from oncue_scheduler.websocket_api import ws_list_schedules
+    from oncue_scheduler.const import DOMAIN
+    from oncue_scheduler import OnCueData
 
     await mock_store.async_load()
     await mock_store.async_save_schedule({
@@ -30,7 +30,7 @@ async def test_ws_list_schedules(hass, connection, mock_store):
 
     hass.data[DOMAIN] = {"test_entry": OnCueData(store=mock_store, coordinator=MagicMock())}
 
-    ws_list_schedules(hass, connection, {"id": 1, "type": "ha_oncue_scheduler/list"})
+    ws_list_schedules(hass, connection, {"id": 1, "type": "oncue_scheduler/list"})
 
     assert len(connection.results) == 1
     _, result = connection.results[0]
@@ -40,16 +40,16 @@ async def test_ws_list_schedules(hass, connection, mock_store):
 
 @pytest.mark.asyncio
 async def test_ws_get_schedule(hass, connection, store_with_schedule):
-    from ha_oncue_scheduler.websocket_api import ws_get_schedule
-    from ha_oncue_scheduler.const import DOMAIN
-    from ha_oncue_scheduler import OnCueData
+    from oncue_scheduler.websocket_api import ws_get_schedule
+    from oncue_scheduler.const import DOMAIN
+    from oncue_scheduler import OnCueData
 
     store, saved = store_with_schedule
     hass.data[DOMAIN] = {"test_entry": OnCueData(store=store, coordinator=MagicMock())}
 
     ws_get_schedule(hass, connection, {
         "id": 1,
-        "type": "ha_oncue_scheduler/get",
+        "type": "oncue_scheduler/get",
         "schedule_id": saved["id"],
     })
 
@@ -61,16 +61,16 @@ async def test_ws_get_schedule(hass, connection, store_with_schedule):
 
 @pytest.mark.asyncio
 async def test_ws_get_schedule_not_found(hass, connection, mock_store):
-    from ha_oncue_scheduler.websocket_api import ws_get_schedule
-    from ha_oncue_scheduler.const import DOMAIN
-    from ha_oncue_scheduler import OnCueData
+    from oncue_scheduler.websocket_api import ws_get_schedule
+    from oncue_scheduler.const import DOMAIN
+    from oncue_scheduler import OnCueData
 
     await mock_store.async_load()
     hass.data[DOMAIN] = {"test_entry": OnCueData(store=mock_store, coordinator=MagicMock())}
 
     ws_get_schedule(hass, connection, {
         "id": 1,
-        "type": "ha_oncue_scheduler/get",
+        "type": "oncue_scheduler/get",
         "schedule_id": "nonexistent",
     })
 
@@ -80,16 +80,16 @@ async def test_ws_get_schedule_not_found(hass, connection, mock_store):
 
 @pytest.mark.asyncio
 async def test_ws_save_schedule(hass, connection, mock_store):
-    from ha_oncue_scheduler.websocket_api import ws_save_schedule
-    from ha_oncue_scheduler.const import DOMAIN
-    from ha_oncue_scheduler import OnCueData
+    from oncue_scheduler.websocket_api import ws_save_schedule
+    from oncue_scheduler.const import DOMAIN
+    from oncue_scheduler import OnCueData
 
     await mock_store.async_load()
     hass.data[DOMAIN] = {"test_entry": OnCueData(store=mock_store, coordinator=MagicMock())}
 
     await ws_save_schedule(hass, connection, {
         "id": 1,
-        "type": "ha_oncue_scheduler/save",
+        "type": "oncue_scheduler/save",
         "schedule": {
             "name": "New Schedule",
             "entity_ids": ["switch.lamp"],
@@ -105,16 +105,16 @@ async def test_ws_save_schedule(hass, connection, mock_store):
 
 @pytest.mark.asyncio
 async def test_ws_save_schedule_invalid(hass, connection, mock_store):
-    from ha_oncue_scheduler.websocket_api import ws_save_schedule
-    from ha_oncue_scheduler.const import DOMAIN
-    from ha_oncue_scheduler import OnCueData
+    from oncue_scheduler.websocket_api import ws_save_schedule
+    from oncue_scheduler.const import DOMAIN
+    from oncue_scheduler import OnCueData
 
     await mock_store.async_load()
     hass.data[DOMAIN] = {"test_entry": OnCueData(store=mock_store, coordinator=MagicMock())}
 
     await ws_save_schedule(hass, connection, {
         "id": 1,
-        "type": "ha_oncue_scheduler/save",
+        "type": "oncue_scheduler/save",
         "schedule": {
             "name": "",
             "entity_ids": [],
@@ -128,16 +128,16 @@ async def test_ws_save_schedule_invalid(hass, connection, mock_store):
 
 @pytest.mark.asyncio
 async def test_ws_delete_schedule(hass, connection, store_with_schedule):
-    from ha_oncue_scheduler.websocket_api import ws_delete_schedule
-    from ha_oncue_scheduler.const import DOMAIN
-    from ha_oncue_scheduler import OnCueData
+    from oncue_scheduler.websocket_api import ws_delete_schedule
+    from oncue_scheduler.const import DOMAIN
+    from oncue_scheduler import OnCueData
 
     store, saved = store_with_schedule
     hass.data[DOMAIN] = {"test_entry": OnCueData(store=store, coordinator=MagicMock())}
 
     await ws_delete_schedule(hass, connection, {
         "id": 1,
-        "type": "ha_oncue_scheduler/delete",
+        "type": "oncue_scheduler/delete",
         "schedule_id": saved["id"],
     })
 
@@ -149,16 +149,16 @@ async def test_ws_delete_schedule(hass, connection, store_with_schedule):
 
 @pytest.mark.asyncio
 async def test_ws_delete_not_found(hass, connection, mock_store):
-    from ha_oncue_scheduler.websocket_api import ws_delete_schedule
-    from ha_oncue_scheduler.const import DOMAIN
-    from ha_oncue_scheduler import OnCueData
+    from oncue_scheduler.websocket_api import ws_delete_schedule
+    from oncue_scheduler.const import DOMAIN
+    from oncue_scheduler import OnCueData
 
     await mock_store.async_load()
     hass.data[DOMAIN] = {"test_entry": OnCueData(store=mock_store, coordinator=MagicMock())}
 
     await ws_delete_schedule(hass, connection, {
         "id": 1,
-        "type": "ha_oncue_scheduler/delete",
+        "type": "oncue_scheduler/delete",
         "schedule_id": "nope",
     })
 
@@ -167,16 +167,16 @@ async def test_ws_delete_not_found(hass, connection, mock_store):
 
 @pytest.mark.asyncio
 async def test_ws_toggle_active(hass, connection, store_with_schedule):
-    from ha_oncue_scheduler.websocket_api import ws_toggle_active
-    from ha_oncue_scheduler.const import DOMAIN
-    from ha_oncue_scheduler import OnCueData
+    from oncue_scheduler.websocket_api import ws_toggle_active
+    from oncue_scheduler.const import DOMAIN
+    from oncue_scheduler import OnCueData
 
     store, saved = store_with_schedule
     hass.data[DOMAIN] = {"test_entry": OnCueData(store=store, coordinator=MagicMock())}
 
     await ws_toggle_active(hass, connection, {
         "id": 1,
-        "type": "ha_oncue_scheduler/toggle_active",
+        "type": "oncue_scheduler/toggle_active",
         "schedule_id": saved["id"],
     })
 
@@ -187,9 +187,9 @@ async def test_ws_toggle_active(hass, connection, store_with_schedule):
 
 @pytest.mark.asyncio
 async def test_ws_save_detects_conflict(hass, connection, mock_store):
-    from ha_oncue_scheduler.websocket_api import ws_save_schedule
-    from ha_oncue_scheduler.const import DOMAIN
-    from ha_oncue_scheduler import OnCueData
+    from oncue_scheduler.websocket_api import ws_save_schedule
+    from oncue_scheduler.const import DOMAIN
+    from oncue_scheduler import OnCueData
 
     await mock_store.async_load()
 
@@ -209,7 +209,7 @@ async def test_ws_save_detects_conflict(hass, connection, mock_store):
     slots2 = [0] * 96  # slot 0 is OFF, conflicting with Schedule A's ON
     await ws_save_schedule(hass, connection, {
         "id": 1,
-        "type": "ha_oncue_scheduler/save",
+        "type": "oncue_scheduler/save",
         "schedule": {
             "name": "Schedule B",
             "entity_ids": ["switch.lamp"],
@@ -227,9 +227,9 @@ async def test_ws_save_detects_conflict(hass, connection, mock_store):
 @pytest.mark.asyncio
 async def test_save_empty_schedule_returns_warning(hass, connection, mock_store):
     """Saving a schedule with all slots off includes a warning in the response."""
-    from ha_oncue_scheduler.websocket_api import ws_save_schedule
-    from ha_oncue_scheduler.const import DOMAIN
-    from ha_oncue_scheduler import OnCueData
+    from oncue_scheduler.websocket_api import ws_save_schedule
+    from oncue_scheduler.const import DOMAIN
+    from oncue_scheduler import OnCueData
 
     await mock_store.async_load()
     hass.data[DOMAIN] = {"test_entry": OnCueData(store=mock_store, coordinator=MagicMock())}
@@ -237,7 +237,7 @@ async def test_save_empty_schedule_returns_warning(hass, connection, mock_store)
     all_off_slots = [0] * 96
     await ws_save_schedule(hass, connection, {
         "id": 1,
-        "type": "ha_oncue_scheduler/save",
+        "type": "oncue_scheduler/save",
         "schedule": {
             "name": "Empty Schedule",
             "entity_ids": ["switch.test"],

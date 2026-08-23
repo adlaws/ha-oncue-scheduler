@@ -1,5 +1,5 @@
 {
-    "name": "ha-oncue-scheduler-frontend",
+    "name": "oncue-scheduler-frontend",
     "private": true,
     "version": "0.1.0",
     "type": "module",
