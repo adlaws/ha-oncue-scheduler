@@ -1,0 +1,222 @@
+{
+  "ha-integration-developer": {
+    "sha": "c8b2ef33aab58c445c6e4c7f39573ecb5f5a56d4",
+    "installedAt": "2026-08-23T05:26:58.913Z",
+    "sourceRepo": {
+      "owner": "adlaws",
+      "repo": "ai-skills-collection",
+      "branch": "master",
+      "filePath": "skills/frameworks/ha-integration-developer"
+    },
+    "contentHash": "d2a8cf68b8b01c2068b835ebf9e17d32a8e307a2136df5d34ea5d3392271bf67"
+  },
+  "project-planner": {
+    "sha": "db070bbe93ceaab521dd3252316320759dc3b8ce",
+    "installedAt": "2026-08-23T05:27:17.566Z",
+    "sourceRepo": {
+      "owner": "adlaws",
+      "repo": "ai-skills-collection",
+      "branch": "master",
+      "filePath": "skills/workflow/project-planner"
+    },
+    "contentHash": "24e27d703512e201a3b511ef60c34017c9bc52ba3c3302697073ee73aa7e158e"
+  },
+  "research-buddy": {
+    "sha": "01e689aa03856126079a449d074a55ef7f87a455",
+    "installedAt": "2026-08-23T05:27:18.653Z",
+    "sourceRepo": {
+      "owner": "adlaws",
+      "repo": "ai-skills-collection",
+      "branch": "master",
+      "filePath": "skills/workflow/research-buddy"
+    },
+    "contentHash": "c7bc5c5ef18fc01cf9e3651b93b4531fac6be7cf874786314e79babb62d8797f"
+  },
+  "ralph-loop": {
+    "sha": "571d78ef6b1d5d325a9bccc7d5210e88851744c1",
+    "installedAt": "2026-08-23T05:27:19.717Z",
+    "sourceRepo": {
+      "owner": "adlaws",
+      "repo": "ai-skills-collection",
+      "branch": "master",
+      "filePath": "skills/workflow/ralph-loop"
+    },
+    "contentHash": "d9cd2100144ac76477df75f949c279a3a29eacaac802a478d46ffaa2c39b679c"
+  },
+  "ticket-a-z": {
+    "sha": "a52e2ba79515a5e76e175c033462ddabca41ed79",
+    "installedAt": "2026-08-23T05:27:20.824Z",
+    "sourceRepo": {
+      "owner": "adlaws",
+      "repo": "ai-skills-collection",
+      "branch": "master",
+      "filePath": "skills/workflow/ticket-a-z"
+    },
+    "contentHash": "981d793571ad874236e2dc9417340b9e0175e5b6057d548728f162de1367bcae"
+  },
+  "ticket-maker": {
+    "sha": "8ccb5412a9934d599b07451a2c6b22c9347731f6",
+    "installedAt": "2026-08-23T05:27:21.836Z",
+    "sourceRepo": {
+      "owner": "adlaws",
+      "repo": "ai-skills-collection",
+      "branch": "master",
+      "filePath": "skills/workflow/ticket-maker"
+    },
+    "contentHash": "e9d2d31ed63ce4f77ff9b6d2f5f5aa8b82953593ee19cd47e06d4fc8ef3ad509"
+  },
+  "ticket-planner": {
+    "sha": "b6b7391c39734692b80fffeb9e93931a51311eb7",
+    "installedAt": "2026-08-23T05:27:22.911Z",
+    "sourceRepo": {
+      "owner": "adlaws",
+      "repo": "ai-skills-collection",
+      "branch": "master",
+      "filePath": "skills/workflow/ticket-planner"
+    },
+    "contentHash": "5deb9f4a3c4abf9519e3c7b173f9acfec22c30ee22746b3421bd4885c4de2af0"
+  },
+  "ticket-reviewer": {
+    "sha": "9f212e765357df02bb0442c51d1d2bc0c0a42b0f",
+    "installedAt": "2026-08-23T05:27:23.951Z",
+    "sourceRepo": {
+      "owner": "adlaws",
+      "repo": "ai-skills-collection",
+      "branch": "master",
+      "filePath": "skills/workflow/ticket-reviewer"
+    },
+    "contentHash": "9bc59fd12b6aff4db020b3dfddd1d3335bed2d891c728c1d2fd4549a8661a25d"
+  },
+  "ticket-worker": {
+    "sha": "b052f7b831675cc3702eab3ae42ca3737ffd8afd",
+    "installedAt": "2026-08-23T05:27:24.992Z",
+    "sourceRepo": {
+      "owner": "adlaws",
+      "repo": "ai-skills-collection",
+      "branch": "master",
+      "filePath": "skills/workflow/ticket-worker"
+    },
+    "contentHash": "aced27e1d16fbaadfafd9b0d7376839d1daa85170ed2ecc9365458dafe77d3ea"
+  },
+  "ticket-yes-no": {
+    "sha": "c2ef086493e60cebab8b8fa4ed5ff36477b7838b",
+    "installedAt": "2026-08-23T05:27:26.027Z",
+    "sourceRepo": {
+      "owner": "adlaws",
+      "repo": "ai-skills-collection",
+      "branch": "master",
+      "filePath": "skills/workflow/ticket-yes-no"
+    },
+    "contentHash": "674359a8fcd3601bc3ead698bd952d560a67dcd26b42e87982603567b98f52de"
+  },
+  "diagnose": {
+    "sha": "43d464d0e9d1049b9d525975c0f7367ab7e01a5f",
+    "installedAt": "2026-08-23T05:27:27.918Z",
+    "sourceRepo": {
+      "owner": "adlaws",
+      "repo": "ai-skills-collection",
+      "branch": "master",
+      "filePath": "skills/workflow/diagnose"
+    },
+    "contentHash": "15939a26f86edec2d4862042b8564e5a062cb81d04e047a0cea6305c8830b5f5"
+  },
+  "code-optimisation": {
+    "sha": "4e9d2fde26fdae269dd69635c5fd49a7137caabc",
+    "installedAt": "2026-08-23T05:27:28.957Z",
+    "sourceRepo": {
+      "owner": "adlaws",
+      "repo": "ai-skills-collection",
+      "branch": "master",
+      "filePath": "skills/workflow/code-optimisation"
+    },
+    "contentHash": "a96d1e272e7766b0fbce9a4567a97b390952b3d3fee166005c526dae09ef6992"
+  },
+  "documentation-reviewer": {
+    "sha": "17bb5955d3d786efccd161d506b2ad81b8d1835b",
+    "installedAt": "2026-08-23T05:27:35.423Z",
+    "sourceRepo": {
+      "owner": "adlaws",
+      "repo": "ai-skills-collection",
+      "branch": "master",
+      "filePath": "skills/documentation/documentation-reviewer"
+    },
+    "contentHash": "bed269a2220b76b8e271d4a79ebe3550e93b81a8dd404cf948d79d970515bedd"
+  },
+  "documenter": {
+    "sha": "81d2691845f02e32873bfadb08dbe48a1ef5d439",
+    "installedAt": "2026-08-23T05:27:36.451Z",
+    "sourceRepo": {
+      "owner": "adlaws",
+      "repo": "ai-skills-collection",
+      "branch": "master",
+      "filePath": "skills/documentation/documenter"
+    },
+    "contentHash": "4599a37f2945187e51a8b29f39f1a95e409a302d75badbc60009e6f83404874c"
+  },
+  "markdown-formatter": {
+    "sha": "0a76be75c815ffa932019e48d87a9ad3f37f99af",
+    "installedAt": "2026-08-23T05:27:38.081Z",
+    "sourceRepo": {
+      "owner": "adlaws",
+      "repo": "ai-skills-collection",
+      "branch": "master",
+      "filePath": "skills/documentation/markdown-formatter"
+    },
+    "contentHash": "4f43175c4316aa0f4b1d63f213dfce64eca9805fcc4878252b8734585c748742"
+  },
+  "code-reviewer": {
+    "sha": "386a496c7cf006c58d326d3d683002f09b709c9f",
+    "installedAt": "2026-08-23T05:27:57.094Z",
+    "sourceRepo": {
+      "owner": "adlaws",
+      "repo": "ai-skills-collection",
+      "branch": "master",
+      "filePath": "skills/qa/code-reviewer"
+    },
+    "contentHash": "45486215391af544d99352a840bbad7bf03cea8fbe6a7988e1fd8494da8e2d8a"
+  },
+  "aggressive-review-and-fix": {
+    "sha": "1d4ff68d5f2e5196cfb445174bc569112b31b9cb",
+    "installedAt": "2026-08-23T05:27:58.166Z",
+    "sourceRepo": {
+      "owner": "adlaws",
+      "repo": "ai-skills-collection",
+      "branch": "master",
+      "filePath": "skills/qa/aggressive-review-and-fix"
+    },
+    "contentHash": "0e141066d03e2c752b5cf246e79ddc248ab269b79439bf3e010eadd581b27e3a"
+  },
+  "javascript-developer": {
+    "sha": "03e596d95d260f727f01c81f0ade9f851ec93216",
+    "installedAt": "2026-08-23T05:27:59.636Z",
+    "sourceRepo": {
+      "owner": "adlaws",
+      "repo": "ai-skills-collection",
+      "branch": "master",
+      "filePath": "skills/qa/javascript-developer"
+    },
+    "contentHash": "1edd2a95bf7f05b336273ed03318ef516e68e3d057a066dc31df1b476d4e0e64"
+  },
+  "javascript-code-reviewer": {
+    "sha": "9cb0d48c67ddb61536537eff378989801fd57235",
+    "installedAt": "2026-08-23T05:28:00.688Z",
+    "sourceRepo": {
+      "owner": "adlaws",
+      "repo": "ai-skills-collection",
+      "branch": "master",
+      "filePath": "skills/qa/javascript-code-reviewer"
+    },
+    "contentHash": "3e66a8c32d9f67f5de6c0b982fa2ad79a1f41c2a89ec5ff49333a7d3f101bb56"
+  },
+  "prompt-enhancer": {
+    "sha": "aaaf1b24b60377aa1a0da005e472832e5af101f2",
+    "installedAt": "2026-08-23T05:35:09.707Z",
+    "sourceRepo": {
+      "owner": "adlaws",
+      "repo": "ai-skills-collection",
+      "branch": "master",
+      "filePath": "skills/ai/prompt-enhancer"
+    },
+    "contentHash": "e1eedbc85fc605692d8ad4325c314bbb97cfa6436e455ebc976532a86d704726"
+  }
+}

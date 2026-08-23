@@ -1,0 +1,13 @@
+{
+    "config": {
+        "step": {
+            "user": {
+                "title": "OnCue",
+                "description": "Set up the OnCue integration. Only one instance is needed."
+            }
+        },
+        "abort": {
+            "already_configured": "OnCue is already configured."
+        }
+    }
+}
