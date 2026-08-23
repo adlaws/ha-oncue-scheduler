@@ -5,7 +5,7 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_config_flow_creates_entry():
-    from oncue.config_flow import OnCueConfigFlow
+    from ha_oncue_scheduler.config_flow import OnCueConfigFlow
 
     flow = OnCueConfigFlow()
     # First call shows form

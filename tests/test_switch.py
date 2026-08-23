@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 @pytest.mark.asyncio
 async def test_switch_is_on_reflects_active(mock_store):
-    from oncue.switch import ScheduleSwitch
+    from ha_oncue_scheduler.switch import ScheduleSwitch
 
     await mock_store.async_load()
     saved = await mock_store.async_save_schedule({
@@ -21,7 +21,7 @@ async def test_switch_is_on_reflects_active(mock_store):
 
 @pytest.mark.asyncio
 async def test_switch_is_off_when_inactive(mock_store):
-    from oncue.switch import ScheduleSwitch
+    from ha_oncue_scheduler.switch import ScheduleSwitch
 
     await mock_store.async_load()
     saved = await mock_store.async_save_schedule({
@@ -37,7 +37,7 @@ async def test_switch_is_off_when_inactive(mock_store):
 
 @pytest.mark.asyncio
 async def test_switch_turn_off_deactivates(mock_store):
-    from oncue.switch import ScheduleSwitch
+    from ha_oncue_scheduler.switch import ScheduleSwitch
 
     await mock_store.async_load()
     saved = await mock_store.async_save_schedule({
@@ -54,7 +54,7 @@ async def test_switch_turn_off_deactivates(mock_store):
 
 @pytest.mark.asyncio
 async def test_switch_turn_on_activates(mock_store):
-    from oncue.switch import ScheduleSwitch
+    from ha_oncue_scheduler.switch import ScheduleSwitch
 
     await mock_store.async_load()
     saved = await mock_store.async_save_schedule({
@@ -72,7 +72,7 @@ async def test_switch_turn_on_activates(mock_store):
 
 @pytest.mark.asyncio
 async def test_switch_unique_id(mock_store):
-    from oncue.switch import ScheduleSwitch
+    from ha_oncue_scheduler.switch import ScheduleSwitch
 
     await mock_store.async_load()
     saved = await mock_store.async_save_schedule({
@@ -82,12 +82,12 @@ async def test_switch_unique_id(mock_store):
     })
 
     switch = ScheduleSwitch("test_entry", mock_store, saved)
-    assert switch.unique_id == f"oncue_{saved['id']}"
+    assert switch.unique_id == f"ha_oncue_scheduler_{saved['id']}"
 
 
 @pytest.mark.asyncio
 async def test_switch_extra_attributes(mock_store):
-    from oncue.switch import ScheduleSwitch
+    from ha_oncue_scheduler.switch import ScheduleSwitch
 
     await mock_store.async_load()
     saved = await mock_store.async_save_schedule({
@@ -105,7 +105,7 @@ async def test_switch_extra_attributes(mock_store):
 
 @pytest.mark.asyncio
 async def test_switch_icon(mock_store):
-    from oncue.switch import ScheduleSwitch
+    from ha_oncue_scheduler.switch import ScheduleSwitch
 
     await mock_store.async_load()
     saved = await mock_store.async_save_schedule({

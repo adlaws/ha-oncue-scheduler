@@ -282,7 +282,7 @@ def hass():
 @pytest.fixture
 def mock_store(hass):
     """Return a ScheduleStore backed by an in-memory Store."""
-    from oncue.store import ScheduleStore
+    from ha_oncue_scheduler.store import ScheduleStore
     return ScheduleStore(hass)
 
 

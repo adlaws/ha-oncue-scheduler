@@ -4,14 +4,14 @@ import { resolve } from "path";
 export default defineConfig({
     build: {
         lib: {
-            entry: resolve(__dirname, "src/oncue-panel.ts"),
-            name: "OnCuePanel",
+            entry: resolve(__dirname, "src/ha-oncue-scheduler-panel.ts"),
+            name: "HaOnCueSchedulerPanel",
             formats: ["iife"],
-            fileName: () => "oncue-panel.js",
+            fileName: () => "ha-oncue-scheduler-panel.js",
         },
         outDir: resolve(
             __dirname,
-            "../custom_components/oncue/frontend"
+            "../custom_components/ha_oncue_scheduler/frontend"
         ),
         emptyOutDir: false,
         sourcemap: false,

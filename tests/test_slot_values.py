@@ -1,6 +1,6 @@
 """Tests for slot_values module."""
 
-from oncue.slot_values import validate_slot_value, interpret_slot_value
+from ha_oncue_scheduler.slot_values import validate_slot_value, interpret_slot_value
 
 
 def test_validate_on_off_valid():

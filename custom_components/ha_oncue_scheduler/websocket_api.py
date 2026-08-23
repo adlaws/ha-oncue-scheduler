@@ -127,7 +127,7 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
 
 @websocket_api.websocket_command(
     {
-        vol.Required("type"): "oncue/list",
+        vol.Required("type"): "ha_oncue_scheduler/list",
     }
 )
 @callback
@@ -146,7 +146,7 @@ def ws_list_schedules(
 
 @websocket_api.websocket_command(
     {
-        vol.Required("type"): "oncue/get",
+        vol.Required("type"): "ha_oncue_scheduler/get",
         vol.Required("schedule_id"): str,
     }
 )
@@ -170,7 +170,7 @@ def ws_get_schedule(
 
 @websocket_api.websocket_command(
     {
-        vol.Required("type"): "oncue/save",
+        vol.Required("type"): "ha_oncue_scheduler/save",
         vol.Required("schedule"): dict,
     }
 )
@@ -204,7 +204,7 @@ async def ws_save_schedule(
 
 @websocket_api.websocket_command(
     {
-        vol.Required("type"): "oncue/delete",
+        vol.Required("type"): "ha_oncue_scheduler/delete",
         vol.Required("schedule_id"): str,
     }
 )
@@ -228,7 +228,7 @@ async def ws_delete_schedule(
 
 @websocket_api.websocket_command(
     {
-        vol.Required("type"): "oncue/toggle_active",
+        vol.Required("type"): "ha_oncue_scheduler/toggle_active",
         vol.Required("schedule_id"): str,
     }
 )

@@ -18,7 +18,7 @@ from .websocket_api import async_register_websocket_api
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [Platform.SWITCH]
-PANEL_URL = "/oncue/panel"
+PANEL_URL = "/ha_oncue_scheduler/panel"
 PANEL_ICON = "mdi:calendar-clock"
 PANEL_TITLE = "OnCue"
 FRONTEND_DIR = Path(__file__).parent / "frontend"
@@ -51,7 +51,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Register frontend panel
     hass.http.register_static_path(
-        PANEL_URL, str(FRONTEND_DIR / "oncue-panel.js"), cache_headers=True
+        PANEL_URL, str(FRONTEND_DIR / "ha-oncue-scheduler-panel.js"), cache_headers=True
     )
     hass.components.frontend.async_register_built_in_panel(
         component_name="custom",
@@ -60,7 +60,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         frontend_url_path=DOMAIN,
         require_admin=False,
         config={"_panel_custom": {
-            "name": "oncue-panel",
+            "name": "ha-oncue-scheduler-panel",
             "embed_iframe": False,
             "trust_external": False,
             "js_url": PANEL_URL,

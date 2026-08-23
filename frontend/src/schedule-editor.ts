@@ -402,7 +402,7 @@ export class ScheduleEditor extends LitElement {
             }
 
             const result = await this.hass.connection.sendMessagePromise({
-                type: "oncue/save",
+                type: "ha_oncue_scheduler/save",
                 schedule,
             });
 
@@ -462,7 +462,7 @@ export class ScheduleEditor extends LitElement {
 
         try {
             await this.hass.connection.sendMessagePromise({
-                type: "oncue/delete",
+                type: "ha_oncue_scheduler/delete",
                 schedule_id: this.schedule.id,
             });
             this.dispatchEvent(

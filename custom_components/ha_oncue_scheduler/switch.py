@@ -76,7 +76,7 @@ class ScheduleSwitch(SwitchEntity):
         self._entry_id = entry_id
         self._store = store
         self._schedule_id: str = schedule["id"]
-        self._attr_unique_id = f"oncue_{schedule['id']}"
+        self._attr_unique_id = f"ha_oncue_scheduler_{schedule['id']}"
         self._attr_name = schedule.get("name", "Schedule")
 
     @property
