@@ -7,6 +7,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.components.frontend import (
+    async_register_built_in_panel,
+    async_remove_panel,
+)
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
@@ -56,7 +60,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             PANEL_URL, str(FRONTEND_DIR / "oncue-scheduler-panel.js"), True
         )
     ])
-    hass.components.frontend.async_register_built_in_panel(
+    async_register_built_in_panel(
+        hass,
         component_name="custom",
         sidebar_title=PANEL_TITLE,
         sidebar_icon=PANEL_ICON,
@@ -82,5 +87,5 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[DOMAIN].pop(entry.entry_id, None)
         if not hass.data[DOMAIN]:
             hass.data.pop(DOMAIN, None)
-        hass.components.frontend.async_remove_panel(DOMAIN)
+        async_remove_panel(hass, DOMAIN)
     return unload_ok

@@ -477,7 +477,25 @@ your brand to the
 [home-assistant/brands](https://github.com/home-assistant/brands)
 repository.
 
-### 9.6 Self-Contained Integration Code
+### 9.6 Use Current HA HTTP API for Static Paths
+
+The `hass.http.register_static_path()` method was removed in HA
+2025.x. Use the async replacement:
+
+```python
+from homeassistant.components.http import StaticPathConfig
+
+await hass.http.async_register_static_paths([
+    StaticPathConfig(url_path, file_path, cache_headers)
+])
+```
+
+This requires `"http"` or `"frontend"` in `manifest.json`
+`dependencies` (frontend already implies http). Always check the HA
+developer docs for the target version — HTTP/frontend APIs change
+between releases.
+
+### 9.7 Self-Contained Integration Code
 
 The HA integration under `custom_components/` duplicates the standalone
 library code rather than importing from `src/`. This is intentional —

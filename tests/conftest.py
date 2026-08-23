@@ -38,6 +38,8 @@ _ha_components_http = _make_module("homeassistant.components.http")
 _ha_components_switch = _make_module("homeassistant.components.switch")
 _ha_components_websocket_api = _make_module("homeassistant.components.websocket_api")
 _ha_components_frontend = _make_module("homeassistant.components.frontend")
+_ha_components_frontend.async_register_built_in_panel = MagicMock()
+_ha_components_frontend.async_remove_panel = MagicMock()
 _ha_util = _make_module("homeassistant.util")
 _ha_util_dt = _make_module("homeassistant.util.dt")
 
