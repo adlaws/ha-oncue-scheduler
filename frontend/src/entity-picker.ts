@@ -4,10 +4,12 @@ import { sharedStyles } from "./styles";
 import type { HomeAssistant } from "./types";
 
 const SUPPORTED_DOMAINS = ["switch", "light", "fan", "input_boolean"];
+const COLOR_MODES = ["rgb", "rgbw", "rgbww", "hs", "xy"];
 
 @customElement("entity-picker")
 export class EntityPicker extends LitElement {
     @property({ attribute: false }) hass!: HomeAssistant;
+    @property({ type: String }) slotType: string = "on_off";
     @property({ type: Array }) selectedIds: string[] = [];
     @property({ type: Object }) overrides: Record<string, string> = {};
     @property({ type: Object }) scheduledStates: Record<string, string> = {};
@@ -167,10 +169,17 @@ export class EntityPicker extends LitElement {
     private get _availableEntities(): { id: string; name: string }[] {
         if (!this.hass?.states) return [];
         const selected = new Set(this.selectedIds);
+        const isColor = this.slotType === "color";
         return Object.keys(this.hass.states)
             .filter((id) => {
+                if (selected.has(id)) return false;
                 const domain = id.split(".")[0];
-                return SUPPORTED_DOMAINS.includes(domain) && !selected.has(id);
+                if (isColor) {
+                    if (domain !== "light") return false;
+                    const modes = this.hass.states[id]?.attributes?.supported_color_modes;
+                    return Array.isArray(modes) && modes.some((m: string) => COLOR_MODES.includes(m));
+                }
+                return SUPPORTED_DOMAINS.includes(domain);
             })
             .map((id) => ({
                 id,
@@ -231,7 +240,7 @@ export class EntityPicker extends LitElement {
           ${this._friendlyName(id)}
           <span class="entity-id">${id}</span>
         </span>
-        ${this.showOverrides ? html`
+        ${this.showOverrides && this.slotType !== "color" ? html`
           <span class="override-controls">
             <button
               class="override-btn ${onClass}"

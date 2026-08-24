@@ -162,11 +162,11 @@ class ScheduleCoordinator:
                 override = self._overrides.get(schedule["id"], {}).get(entity_id)
                 if override is not None:
                     override_desired = 1 if override == "on" else 0
-                    await self._async_apply_state(entity_id, override_desired, slot_type)
+                    await self._async_apply_state(entity_id, override_desired, slot_type, schedule)
                 else:
-                    await self._async_apply_state(entity_id, desired_state, slot_type)
+                    await self._async_apply_state(entity_id, desired_state, slot_type, schedule)
 
-    async def _async_apply_state(self, entity_id: str, desired: int, slot_type: str) -> None:
+    async def _async_apply_state(self, entity_id: str, desired: int, slot_type: str, schedule: dict[str, Any] | None = None) -> None:
         state = self._hass.states.get(entity_id)
         if state is None:
             _LOGGER.warning(
@@ -180,13 +180,33 @@ class ScheduleCoordinator:
             )
             return
 
-        current_on = state.state == "on"
-        result = interpret_slot_value(desired, slot_type)
+        palette = schedule.get("palette") if schedule else None
+        result = interpret_slot_value(desired, slot_type, palette)
         action = result["action"]
 
         if action == "none":
             return
 
+        if action == "set_color":
+            rgb = result["rgb_color"]
+            self._applying.add(entity_id)
+            try:
+                await self._hass.services.async_call(
+                    "light",
+                    "turn_on",
+                    {"entity_id": entity_id, "rgb_color": rgb},
+                    blocking=True,
+                )
+            except Exception:
+                _LOGGER.warning(
+                    "Failed to set color on '%s'", entity_id,
+                    exc_info=True,
+                )
+            finally:
+                self._applying.discard(entity_id)
+            return
+
+        current_on = state.state == "on"
         want_on = action == "turn_on"
 
         if current_on == want_on:
@@ -244,7 +264,8 @@ class ScheduleCoordinator:
 
         slot_type = schedule.get("slot_type", SLOT_TYPE_ON_OFF)
         desired = day_slots[slot_index]
-        result = interpret_slot_value(desired, slot_type)
+        palette = schedule.get("palette")
+        result = interpret_slot_value(desired, slot_type, palette)
         action = result["action"]
         if action == "none":
             scheduled_state = "off"
@@ -334,7 +355,8 @@ class ScheduleCoordinator:
             return None
 
         slot_type = schedule.get("slot_type", SLOT_TYPE_ON_OFF)
-        result = interpret_slot_value(day_slots[slot_index], slot_type)
+        palette = schedule.get("palette")
+        result = interpret_slot_value(day_slots[slot_index], slot_type, palette)
         action = result["action"]
         if action == "none":
             return "off"

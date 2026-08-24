@@ -352,3 +352,44 @@ async def test_validation_rejects_invalid_slot_values(store):
     }
     with pytest.raises(ValueError, match="slot"):
         await store.async_save_schedule(data)
+
+
+@pytest.mark.asyncio
+async def test_save_color_schedule_with_palette(store):
+    data = {
+        "name": "Color Schedule",
+        "entity_ids": ["light.test"],
+        "cadence": "daily",
+        "slot_type": "color",
+        "palette": ["#ff0000", "#00ff00", "#0000ff"],
+    }
+    result = await store.async_save_schedule(data)
+    assert result["slot_type"] == "color"
+    assert result["palette"] == ["#ff0000", "#00ff00", "#0000ff"]
+
+
+@pytest.mark.asyncio
+async def test_color_schedule_rejects_missing_palette(store):
+    data = {
+        "name": "No Palette",
+        "entity_ids": ["light.test"],
+        "cadence": "daily",
+        "slot_type": "color",
+    }
+    with pytest.raises(ValueError, match="palette"):
+        await store.async_save_schedule(data)
+
+
+@pytest.mark.asyncio
+async def test_color_schedule_accepts_palette_index_slots(store):
+    data = {
+        "name": "Color Slots",
+        "entity_ids": ["light.test"],
+        "cadence": "daily",
+        "slot_type": "color",
+        "palette": ["#ff0000", "#00ff00"],
+        "slots": {"0": [0, 1, 2, 0] * 24},
+    }
+    result = await store.async_save_schedule(data)
+    assert result["slots"]["0"][1] == 1
+    assert result["slots"]["0"][2] == 2

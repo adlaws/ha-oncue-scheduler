@@ -10,6 +10,7 @@ export interface Schedule {
     slot_minutes: number;
     slot_type: string;
     slots: Record<string, number[]>;
+    palette?: string[];
 }
 
 export interface ScheduleSummary {

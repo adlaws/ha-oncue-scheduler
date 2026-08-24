@@ -65,6 +65,15 @@ export const sharedStyles = css`
     outline-offset: -1px;
   }
 
+  input:disabled,
+  select:disabled,
+  textarea:disabled {
+    background: var(--secondary-background-color, #f5f5f5);
+    color: var(--secondary-text-color, #727272);
+    border-color: transparent;
+    cursor: default;
+  }
+
   label {
     display: block;
     font-size: 12px;

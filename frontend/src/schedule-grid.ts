@@ -11,6 +11,8 @@ export class ScheduleGrid extends LitElement {
     @property({ type: String }) cadence: "daily" | "weekly" | "custom" = "daily";
     @property({ type: Object }) slots: Record<string, number[]> = {};
     @property({ type: Array }) customDates: string[] = [];
+    @property({ type: String }) slotType: string = "on_off";
+    @property({ type: Array }) palette: string[] = [];
 
     @state() private _dragActive = false;
     @state() private _dragValue = 0;
@@ -19,18 +21,22 @@ export class ScheduleGrid extends LitElement {
     @state() private _dragEndRow = -1;
     @state() private _dragEndCol = -1;
     @state() private _page = 0;
+    @state() private _activePaletteIndex = 1;
 
-    private _daysPerPage = 7;
+    private _daysPerPage = 56;
 
     static styles = [
         sharedStyles,
         css`
       :host {
         display: block;
+        --_grid-bg: var(--ha-card-background, var(--card-background-color, var(--primary-background-color, #fafafa)));
       }
       .grid-container {
         overflow-x: auto;
         -webkit-overflow-scrolling: touch;
+        padding-bottom: 0.5em;
+        background: var(--_grid-bg);
       }
       .toolbar {
         display: flex;
@@ -45,7 +51,7 @@ export class ScheduleGrid extends LitElement {
       }
       .grid {
         display: grid;
-        grid-template-columns: 100px repeat(${SLOTS_PER_DAY}, var(--ss-cell-size));
+        grid-template-columns: 130px repeat(${SLOTS_PER_DAY}, minmax(var(--ss-cell-size), 1fr));
         gap: 1px;
         user-select: none;
         -webkit-user-select: none;
@@ -59,6 +65,10 @@ export class ScheduleGrid extends LitElement {
       }
       .header-spacer {
         grid-column: 1;
+        position: sticky;
+        left: 0;
+        z-index: 2;
+        background: var(--_grid-bg);
       }
       .row-label {
         font-size: 12px;
@@ -70,10 +80,27 @@ export class ScheduleGrid extends LitElement {
         text-overflow: ellipsis;
         display: flex;
         align-items: center;
+        justify-content: space-between;
+        gap: 4px;
+        position: sticky;
+        left: 0;
+        z-index: 2;
+        background: var(--_grid-bg);
+      }
+      .row-label .day-name {
+        flex-shrink: 0;
+      }
+      .row-label .day-date {
+        color: var(--secondary-text-color, #727272);
+        font-weight: 400;
+      }
+      .row-label.week-even {
+        background: color-mix(in srgb, var(--ss-primary) 6%, var(--_grid-bg));
       }
       .cell {
-        width: var(--ss-cell-size);
-        height: var(--ss-cell-size);
+        aspect-ratio: 1;
+        min-width: var(--ss-cell-size);
+        min-height: var(--ss-cell-size);
         border-radius: 2px;
         cursor: pointer;
         transition: background 0.1s;
@@ -85,6 +112,12 @@ export class ScheduleGrid extends LitElement {
       .cell.off {
         background: var(--ss-cell-off);
         border: 1px solid var(--divider-color, #e0e0e0);
+      }
+      .cell.off.week-even {
+        background: color-mix(in srgb, var(--ss-primary) 6%, var(--ss-cell-off));
+      }
+      .cell.color-set {
+        border: 1px solid rgba(0, 0, 0, 0.15);
       }
       .cell.hour-start {
         border-left: 2px solid var(--warning-color, #ff9800);
@@ -108,6 +141,42 @@ export class ScheduleGrid extends LitElement {
         font-size: 13px;
         color: var(--secondary-text-color, #727272);
       }
+      .palette-bar {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 8px;
+        flex-wrap: wrap;
+      }
+      .palette-bar span {
+        font-size: 12px;
+        color: var(--secondary-text-color, #727272);
+        margin-right: 2px;
+      }
+      .palette-swatch {
+        width: 24px;
+        height: 24px;
+        border-radius: 4px;
+        cursor: pointer;
+        border: 2px solid transparent;
+        box-sizing: border-box;
+        transition: border-color 0.15s, transform 0.1s;
+      }
+      .palette-swatch:hover {
+        transform: scale(1.15);
+      }
+      .palette-swatch.active {
+        border-color: var(--primary-text-color, #212121);
+        box-shadow: 0 0 0 1px var(--ss-bg);
+      }
+      .palette-swatch.eraser {
+        background: var(--ss-cell-off);
+        border-color: var(--ss-border);
+        position: relative;
+      }
+      .palette-swatch.eraser.active {
+        border-color: var(--primary-text-color, #212121);
+      }
     `,
     ];
 
@@ -126,20 +195,38 @@ export class ScheduleGrid extends LitElement {
         return Math.max(1, Math.ceil(this.customDates.length / this._daysPerPage));
     }
 
+    private _renderLabel(key: string) {
+        if (this.cadence !== "custom") return this._dayLabel(key);
+        const d = new Date(key + "T00:00:00");
+        const dow = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d.getDay()];
+        return html`<span class="day-name">${dow}</span><span class="day-date">${key}</span>`;
+    }
+
     private _dayLabel(key: string): string {
         if (this.cadence === "daily") return "Every day";
         if (this.cadence === "weekly") return DAY_NAMES[parseInt(key)] ?? key;
-        return key; // date string for custom
+        const d = new Date(key + "T00:00:00");
+        const dow = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d.getDay()];
+        return `${dow} ${key}`;
     }
 
     render() {
         const dayKeys = this._dayKeys;
         const hours = Array.from({ length: 24 }, (_, i) => i);
+        const isColor = this.slotType === "color";
 
         return html`
+      ${isColor ? this._renderPaletteBar() : nothing}
       <div class="toolbar">
-        <button class="secondary" @click=${() => this._bulkSet(1)}>All On</button>
-        <button class="secondary" @click=${() => this._bulkSet(0)}>All Off</button>
+        ${isColor
+                ? html`
+              <button class="secondary" @click=${() => this._bulkSet(this._activePaletteIndex)}>Fill All</button>
+              <button class="secondary" @click=${() => this._bulkSet(0)}>Clear All</button>
+            `
+                : html`
+              <button class="secondary" @click=${() => this._bulkSet(1)}>All On</button>
+              <button class="secondary" @click=${() => this._bulkSet(0)}>All Off</button>
+            `}
         ${this.cadence === "weekly"
                 ? html`
               <button class="secondary" @click=${this._copyMondayToAll}>Copy Mon → All</button>
@@ -180,15 +267,32 @@ export class ScheduleGrid extends LitElement {
     `;
     }
 
+    private _weekIndex(dayKey: string): number {
+        if (this.cadence !== "custom") return 0;
+        const d = new Date(dayKey + "T00:00:00");
+        const allDates = this.customDates;
+        if (allDates.length === 0) return 0;
+        const first = new Date(allDates[0] + "T00:00:00");
+        // Align to Sunday: days since the Sunday on or before the first date
+        const firstSunday = new Date(first);
+        firstSunday.setDate(first.getDate() - first.getDay());
+        const daysSinceSunday = Math.floor((d.getTime() - firstSunday.getTime()) / 86400000);
+        return Math.floor(daysSinceSunday / 7);
+    }
+
     private _renderRow(dayKey: string, rowIdx: number) {
         const daySlots = this.slots[dayKey] ?? new Array(SLOTS_PER_DAY).fill(0);
+        const isColor = this.slotType === "color";
+        const weekEven = this.cadence === "custom" && this._weekIndex(dayKey) % 2 === 1;
         return html`
-      <div class="row-label">${this._dayLabel(dayKey)}</div>
+      <div class="row-label ${weekEven ? "week-even" : ""}">${this._renderLabel(dayKey)}</div>
       ${daySlots.map((val, colIdx) => {
             const inDrag = this._isInDragRegion(rowIdx, colIdx);
+            const cellStyle = isColor ? this._colorCellStyle(val) : "";
             return html`
           <div
-            class="cell ${val ? "on" : "off"} ${inDrag ? "drag-preview" : ""} ${colIdx % 4 === 0 ? "hour-start" : ""}"
+            class="cell ${isColor ? (val ? "color-set" : "off") : (val ? "on" : "off")} ${weekEven && !val ? "week-even" : ""} ${inDrag ? "drag-preview" : ""} ${colIdx % 4 === 0 ? "hour-start" : ""}"
+            style=${cellStyle}
             data-row=${rowIdx}
             data-col=${colIdx}
             data-day=${dayKey}
@@ -212,6 +316,32 @@ export class ScheduleGrid extends LitElement {
         return `${String(startH).padStart(2, "0")}:${String(startM).padStart(2, "0")} – ${String(endH).padStart(2, "0")}:${String(endM).padStart(2, "0")}`;
     }
 
+    private _colorCellStyle(val: number): string {
+        if (val === 0 || !this.palette || val > this.palette.length) return "";
+        return `background: ${this.palette[val - 1]}`;
+    }
+
+    private _renderPaletteBar() {
+        return html`
+      <div class="palette-bar">
+        <span>Paint:</span>
+        <div
+          class="palette-swatch eraser ${this._activePaletteIndex === 0 ? "active" : ""}"
+          title="Eraser"
+          @click=${() => { this._activePaletteIndex = 0; }}
+        >✕</div>
+        ${this.palette.map((color, i) => html`
+          <div
+            class="palette-swatch ${this._activePaletteIndex === i + 1 ? "active" : ""}"
+            style="background: ${color}"
+            title="${color}"
+            @click=${() => { this._activePaletteIndex = i + 1; }}
+          ></div>
+        `)}
+      </div>
+    `;
+    }
+
     private _isInDragRegion(row: number, col: number): boolean {
         if (!this._dragActive) return false;
         const r0 = Math.min(this._dragStartRow, this._dragEndRow);
@@ -224,7 +354,11 @@ export class ScheduleGrid extends LitElement {
     private _onMouseDown(e: MouseEvent, row: number, col: number, dayKey: string) {
         e.preventDefault();
         const daySlots = this.slots[dayKey] ?? new Array(SLOTS_PER_DAY).fill(0);
-        this._dragValue = daySlots[col] ? 0 : 1;
+        if (this.slotType === "color") {
+            this._dragValue = daySlots[col] === this._activePaletteIndex ? 0 : this._activePaletteIndex;
+        } else {
+            this._dragValue = daySlots[col] ? 0 : 1;
+        }
         this._dragStartRow = row;
         this._dragStartCol = col;
         this._dragEndRow = row;
@@ -247,7 +381,11 @@ export class ScheduleGrid extends LitElement {
     private _onTouchStart(e: TouchEvent, row: number, col: number, dayKey: string) {
         e.preventDefault();
         const daySlots = this.slots[dayKey] ?? new Array(SLOTS_PER_DAY).fill(0);
-        this._dragValue = daySlots[col] ? 0 : 1;
+        if (this.slotType === "color") {
+            this._dragValue = daySlots[col] === this._activePaletteIndex ? 0 : this._activePaletteIndex;
+        } else {
+            this._dragValue = daySlots[col] ? 0 : 1;
+        }
         this._dragStartRow = row;
         this._dragStartCol = col;
         this._dragEndRow = row;

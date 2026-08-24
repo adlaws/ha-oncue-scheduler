@@ -18,15 +18,17 @@ from .const import (
     DEFAULT_REVERT_DELAY,
     DEFAULT_SLOT_MINUTES,
     MAX_CUSTOM_DAYS,
+    MAX_PALETTE_SIZE,
     MAX_REVERT_DELAY,
     SIGNAL_SCHEDULES_UPDATED,
+    SLOT_TYPE_COLOR,
     SLOT_TYPE_ON_OFF,
     STORE_KEY,
     STORE_VERSION,
     VALID_CADENCES,
     VALID_SLOT_TYPES,
 )
-from .slot_values import validate_slot_value
+from .slot_values import validate_palette, validate_slot_value
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -81,6 +83,17 @@ def validate_schedule(data: dict[str, Any]) -> list[str]:
     slot_type = data.get("slot_type", SLOT_TYPE_ON_OFF)
     if slot_type not in VALID_SLOT_TYPES:
         errors.append(f"slot_type must be one of {VALID_SLOT_TYPES}")
+
+    if slot_type == SLOT_TYPE_COLOR:
+        palette = data.get("palette")
+        if not palette:
+            errors.append("palette is required for color slot type")
+        else:
+            perr = validate_palette(palette)
+            if perr:
+                errors.append(perr)
+            elif len(palette) > MAX_PALETTE_SIZE:
+                errors.append(f"palette must have at most {MAX_PALETTE_SIZE} entries")
 
     slots = data.get("slots", {})
     if slots:

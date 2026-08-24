@@ -54,6 +54,8 @@ export class ScheduleEditor extends LitElement {
     @state() private _overrides: Record<string, string> = {};
     @state() private _scheduledStates: Record<string, string> = {};
     @state() private _revertDelay: number | null = 180;
+    @state() private _slotType: string = "on_off";
+    @state() private _palette: string[] = ["#ff0000", "#00ff00", "#0000ff", "#ffff00", "#ff00ff", "#00ffff", "#ff8800", "#ffffff"];
 
     static styles = [
         sharedStyles,
@@ -136,6 +138,25 @@ export class ScheduleEditor extends LitElement {
         padding: 48px 16px;
         font-size: 16px;
       }
+      .cadence-row {
+        display: flex;
+        align-items: flex-end;
+        gap: 8px;
+      }
+      .cadence-row select {
+        flex: 1;
+      }
+      .cadence-row .repeat-check {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding-bottom: 8px;
+        white-space: nowrap;
+        font-size: 13px;
+      }
+      .cadence-row .repeat-check input[type="checkbox"] {
+        width: auto;
+      }
       .checkbox-row {
         display: flex;
         align-items: center;
@@ -143,6 +164,26 @@ export class ScheduleEditor extends LitElement {
         padding-top: 20px;
       }
       .checkbox-row input[type="checkbox"] {
+        width: auto;
+      }
+      .date-range-row {
+        display: flex;
+        align-items: flex-end;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .date-range-row .form-group {
+        flex: 1;
+        min-width: 120px;
+      }
+      .date-range-row .repeat-check {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding-bottom: 8px;
+        white-space: nowrap;
+      }
+      .date-range-row .repeat-check input[type="checkbox"] {
         width: auto;
       }
       .loading-overlay {
@@ -206,6 +247,61 @@ export class ScheduleEditor extends LitElement {
       .status-dot.paused {
         background: var(--disabled-text-color, #bdbdbd);
       }
+      .palette-editor {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        align-items: center;
+      }
+      .palette-entry {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+      }
+      .palette-entry input[type="color"] {
+        width: 32px;
+        height: 32px;
+        padding: 0;
+        border: 1px solid var(--ss-border);
+        border-radius: 4px;
+        cursor: pointer;
+        background: none;
+      }
+      .palette-remove {
+        position: absolute;
+        top: -6px;
+        right: -6px;
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        border: none;
+        background: var(--error-color, #db4437);
+        color: #fff;
+        font-size: 10px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        line-height: 1;
+      }
+      .palette-add {
+        width: 32px;
+        height: 32px;
+        border: 1px dashed var(--ss-border);
+        border-radius: 4px;
+        background: transparent;
+        cursor: pointer;
+        font-size: 18px;
+        color: var(--secondary-text-color, #727272);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+      }
+      .palette-add:hover {
+        background: var(--ss-cell-off);
+      }
     `,
     ];
 
@@ -239,6 +335,8 @@ export class ScheduleEditor extends LitElement {
             this._revertDelay = "revert_delay" in (this.schedule as any)
                 ? (this.schedule as any).revert_delay
                 : 180;
+            this._slotType = this.schedule.slot_type ?? "on_off";
+            this._palette = this.schedule.palette ? [...this.schedule.palette] : ["#ff0000", "#00ff00", "#0000ff", "#ffff00", "#ff00ff", "#00ffff", "#ff8800", "#ffffff"];
         } else {
             this._name = "";
             this._entityIds = [];
@@ -249,6 +347,8 @@ export class ScheduleEditor extends LitElement {
             this._slots = defaultSlots("daily");
             this._active = true;
             this._revertDelay = 180;
+            this._slotType = "on_off";
+            this._palette = ["#ff0000", "#00ff00", "#0000ff", "#ffff00", "#ff00ff", "#00ffff", "#ff8800", "#ffffff"];
         }
         this._dirty = false;
         this._conflicts = [];
@@ -335,47 +435,38 @@ export class ScheduleEditor extends LitElement {
           />
         </div>
 
-        <div class="form-group full-width">
-          <label>Entities</label>
-          <entity-picker
-            .hass=${this.hass}
-            .selectedIds=${this._entityIds}
-            .overrides=${this._overrides}
-            .scheduledStates=${this._scheduledStates}
-            .showOverrides=${!this.isNew}
-            @entities-changed=${(e: CustomEvent) => {
-                this._entityIds = e.detail.entityIds;
-                this._dirty = true;
-            }}
-            @override-set=${this._onOverrideSet}
-            @override-clear=${this._onOverrideClear}
-          ></entity-picker>
-        </div>
-
         <div class="form-group">
           <label for="cadence">Cadence</label>
-          <select
-            id="cadence"
-            .value=${this._cadence}
-            @change=${(e: Event) => {
+          <div class="cadence-row">
+            <select
+              id="cadence"
+              .value=${this._cadence}
+              @change=${(e: Event) => {
                 const newCadence = (e.target as HTMLSelectElement).value as "daily" | "weekly" | "custom";
                 this._cadence = newCadence;
                 this._slots = defaultSlots(newCadence);
                 this._dirty = true;
             }}
-          >
-            <option value="daily">Daily</option>
-            <option value="weekly">Weekly</option>
-            <option value="custom">Custom</option>
-          </select>
+            >
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+              <option value="custom">Custom</option>
+            </select>
+            <label class="repeat-check">
+              <input
+                type="checkbox"
+                .checked=${this._repeat}
+                @change=${(e: Event) => {
+                this._repeat = (e.target as HTMLInputElement).checked;
+                this._dirty = true;
+            }}
+              />
+              Repeat
+            </label>
+          </div>
         </div>
 
         <div class="form-group">
-          <label>Slot Type</label>
-          <input type="text" value="On/Off" disabled />
-        </div>
-
-        <div class="form-group full-width">
           <label>Revert external changes after</label>
           <div class="revert-row">
             <input
@@ -424,46 +515,112 @@ export class ScheduleEditor extends LitElement {
 
         ${this._cadence === "custom"
                 ? html`
-              <div class="checkbox-row">
-                <input
-                  type="checkbox"
-                  id="repeat"
-                  .checked=${this._repeat}
-                  @change=${(e: Event) => {
-                        this._repeat = (e.target as HTMLInputElement).checked;
-                        this._dirty = true;
-                    }}
-                />
-                <label for="repeat" style="margin:0">Repeat</label>
-              </div>
-              <div class="form-group">
-                <label for="start-date">Start Date</label>
-                <input
-                  id="start-date"
-                  type="date"
-                  .value=${this._startDate}
-                  @change=${(e: Event) => {
+              <div class="form-group full-width">
+                <div class="date-range-row">
+                  <div class="form-group">
+                    <label for="start-date">Start Date</label>
+                    <input
+                      id="start-date"
+                      type="date"
+                      .value=${this._startDate}
+                      @change=${(e: Event) => {
                         this._startDate = (e.target as HTMLInputElement).value;
                         this._rebuildCustomSlots();
                         this._dirty = true;
                     }}
-                />
-              </div>
-              <div class="form-group">
-                <label for="end-date">End Date</label>
-                <input
-                  id="end-date"
-                  type="date"
-                  .value=${this._endDate}
-                  @change=${(e: Event) => {
+                    />
+                  </div>
+                  <div class="form-group">
+                    <label for="end-date">End Date</label>
+                    <input
+                      id="end-date"
+                      type="date"
+                      .value=${this._endDate}
+                      @change=${(e: Event) => {
                         this._endDate = (e.target as HTMLInputElement).value;
                         this._rebuildCustomSlots();
                         this._dirty = true;
                     }}
-                />
+                    />
+                  </div>
+                </div>
               </div>
             `
                 : nothing}
+
+        <div class="form-group full-width">
+          <label>Entities</label>
+          <entity-picker
+            .hass=${this.hass}
+            .selectedIds=${this._entityIds}
+            .overrides=${this._overrides}
+            .scheduledStates=${this._scheduledStates}
+            .showOverrides=${!this.isNew}
+            .slotType=${this._slotType}
+            @entities-changed=${(e: CustomEvent) => {
+                this._entityIds = e.detail.entityIds;
+                this._dirty = true;
+            }}
+            @override-set=${this._onOverrideSet}
+            @override-clear=${this._onOverrideClear}
+          ></entity-picker>
+        </div>
+
+        <div class="form-group">
+          <label for="slot-type">Slot Type</label>
+          <select
+            id="slot-type"
+            .value=${this._slotType}
+            @change=${(e: Event) => {
+                const newType = (e.target as HTMLSelectElement).value;
+                if (newType !== this._slotType) {
+                    this._slotType = newType;
+                    this._slots = defaultSlots(this._cadence);
+                    if (this._cadence === "custom") {
+                        this._rebuildCustomSlots();
+                    }
+                    this._dirty = true;
+                }
+            }}
+          >
+            <option value="on_off">On/Off</option>
+            <option value="color">Color</option>
+          </select>
+        </div>
+
+        ${this._slotType === "color" ? html`
+          <div class="form-group full-width">
+            <label>Color Palette</label>
+            <div class="palette-editor">
+              ${this._palette.map((color, i) => html`
+                <div class="palette-entry">
+                  <input
+                    type="color"
+                    .value=${color}
+                    @input=${(e: InputEvent) => {
+                    const newPalette = [...this._palette];
+                    newPalette[i] = (e.target as HTMLInputElement).value;
+                    this._palette = newPalette;
+                    this._dirty = true;
+                }}
+                  />
+                  ${this._palette.length > 1 ? html`
+                    <button class="palette-remove" @click=${() => {
+                        this._palette = this._palette.filter((_, idx) => idx !== i);
+                        this._dirty = true;
+                    }}>✕</button>
+                  ` : nothing}
+                </div>
+              `)}
+              ${this._palette.length < 10 ? html`
+                <button class="palette-add" @click=${() => {
+                        this._palette = [...this._palette, "#888888"];
+                        this._dirty = true;
+                    }}>+</button>
+              ` : nothing}
+            </div>
+          </div>
+        ` : nothing}
       </div>
 
       <div class="grid-section">
@@ -472,6 +629,8 @@ export class ScheduleEditor extends LitElement {
           .cadence=${this._cadence}
           .slots=${this._slots}
           .customDates=${customDates}
+          .slotType=${this._slotType}
+          .palette=${this._palette}
           @slots-changed=${(e: CustomEvent) => {
                 this._slots = e.detail.slots;
                 this._dirty = true;
@@ -509,15 +668,18 @@ export class ScheduleEditor extends LitElement {
                 name: this._name.trim(),
                 entity_ids: entityIds,
                 cadence: this._cadence,
-                repeat: this._cadence === "custom" ? this._repeat : true,
+                repeat: this._repeat,
                 start_date: this._cadence === "custom" ? this._startDate || null : null,
                 end_date: this._cadence === "custom" ? this._endDate || null : null,
                 active: this._active,
                 slot_minutes: 15,
-                slot_type: "on_off",
+                slot_type: this._slotType,
                 slots: this._slots,
                 revert_delay: this._revertDelay,
             };
+            if (this._slotType === "color") {
+                schedule.palette = this._palette;
+            }
             if (this.schedule?.id) {
                 schedule.id = this.schedule.id;
             }
