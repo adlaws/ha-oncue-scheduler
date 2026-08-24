@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers import entity_registry as er
 
 from .const import DOMAIN, SIGNAL_SCHEDULES_UPDATED
 
@@ -45,7 +46,12 @@ async def async_setup_entry(
         # Remove deleted entities
         for sid in tracked_ids - current_ids:
             entity = tracked.pop(sid)
-            hass.async_create_task(entity.async_remove())
+            ent_reg = er.async_get(hass)
+            entity_id = ent_reg.async_get_entity_id("switch", DOMAIN, entity.unique_id)
+            if entity_id:
+                ent_reg.async_remove(entity_id)
+            else:
+                hass.async_create_task(entity.async_remove())
 
         # Update existing entities
         for sid in current_ids & tracked_ids:

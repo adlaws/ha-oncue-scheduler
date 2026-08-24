@@ -33,6 +33,11 @@ _ha_helpers_dispatcher = _make_module("homeassistant.helpers.dispatcher")
 _ha_helpers_event = _make_module("homeassistant.helpers.event")
 _ha_helpers_entity_platform = _make_module("homeassistant.helpers.entity_platform")
 _ha_helpers_device_registry = _make_module("homeassistant.helpers.device_registry")
+_ha_helpers_entity_registry = _make_module("homeassistant.helpers.entity_registry")
+_ha_helpers_entity_registry.async_get = MagicMock(return_value=MagicMock(
+    async_get_entity_id=MagicMock(return_value=None),
+    async_remove=MagicMock(),
+))
 _ha_components = _make_module("homeassistant.components")
 _ha_components_http = _make_module("homeassistant.components.http")
 _ha_components_switch = _make_module("homeassistant.components.switch")
