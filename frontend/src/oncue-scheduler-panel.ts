@@ -22,7 +22,7 @@ export class OnCuePanel extends LitElement {
         css`
       :host {
         display: block;
-        height: 100%;
+        height: calc(100vh - var(--header-height, 56px));
       }
       .layout {
         display: flex;
