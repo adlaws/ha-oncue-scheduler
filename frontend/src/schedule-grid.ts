@@ -77,12 +77,17 @@ export class ScheduleGrid extends LitElement {
         border-radius: 2px;
         cursor: pointer;
         transition: background 0.1s;
+        box-sizing: border-box;
       }
       .cell.on {
         background: var(--ss-cell-on);
       }
       .cell.off {
         background: var(--ss-cell-off);
+        border: 1px solid var(--divider-color, #e0e0e0);
+      }
+      .cell.hour-start {
+        border-left: 2px solid var(--warning-color, #ff9800);
       }
       .cell.drag-preview {
         outline: 2px solid var(--ss-primary);
@@ -183,7 +188,7 @@ export class ScheduleGrid extends LitElement {
             const inDrag = this._isInDragRegion(rowIdx, colIdx);
             return html`
           <div
-            class="cell ${val ? "on" : "off"} ${inDrag ? "drag-preview" : ""}"
+            class="cell ${val ? "on" : "off"} ${inDrag ? "drag-preview" : ""} ${colIdx % 4 === 0 ? "hour-start" : ""}"
             data-row=${rowIdx}
             data-col=${colIdx}
             data-day=${dayKey}

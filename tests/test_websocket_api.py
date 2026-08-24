@@ -251,3 +251,82 @@ async def test_save_empty_schedule_returns_warning(hass, connection, mock_store)
     assert "warnings" in result
     assert len(result["warnings"]) == 1
     assert "All time slots are off" in result["warnings"][0]
+
+
+@pytest.mark.asyncio
+async def test_ws_set_override(hass, connection, store_with_schedule):
+    """Setting an override via WS succeeds."""
+    from oncue_scheduler.websocket_api import ws_set_override
+    from oncue_scheduler.const import DOMAIN
+    from oncue_scheduler import OnCueData
+    from oncue_scheduler.coordinator import ScheduleCoordinator
+
+    store, saved = store_with_schedule
+    coordinator = ScheduleCoordinator(hass, store)
+    hass.data[DOMAIN] = {"test_entry": OnCueData(store=store, coordinator=coordinator)}
+
+    hass.states.get = MagicMock(return_value=None)
+
+    await ws_set_override(hass, connection, {
+        "id": 1,
+        "type": "oncue_scheduler/set_override",
+        "schedule_id": saved["id"],
+        "entity_id": "switch.test",
+        "state": "on",
+    })
+
+    assert len(connection.results) == 1
+    _, result = connection.results[0]
+    assert result["success"] is True
+    assert coordinator.get_overrides(saved["id"]) == {"switch.test": "on"}
+
+
+@pytest.mark.asyncio
+async def test_ws_clear_override(hass, connection, store_with_schedule):
+    """Clearing an override via WS succeeds."""
+    from oncue_scheduler.websocket_api import ws_clear_override
+    from oncue_scheduler.const import DOMAIN
+    from oncue_scheduler import OnCueData
+    from oncue_scheduler.coordinator import ScheduleCoordinator
+
+    store, saved = store_with_schedule
+    coordinator = ScheduleCoordinator(hass, store)
+    coordinator.set_override(saved["id"], "switch.test", "on")
+    hass.data[DOMAIN] = {"test_entry": OnCueData(store=store, coordinator=coordinator)}
+
+    hass.states.get = MagicMock(return_value=None)
+
+    await ws_clear_override(hass, connection, {
+        "id": 1,
+        "type": "oncue_scheduler/clear_override",
+        "schedule_id": saved["id"],
+        "entity_id": "switch.test",
+    })
+
+    assert len(connection.results) == 1
+    assert coordinator.get_overrides(saved["id"]) == {}
+
+
+@pytest.mark.asyncio
+async def test_ws_get_overrides(hass, connection, store_with_schedule):
+    """Getting overrides via WS returns overrides and scheduled states."""
+    from oncue_scheduler.websocket_api import ws_get_overrides
+    from oncue_scheduler.const import DOMAIN
+    from oncue_scheduler import OnCueData
+    from oncue_scheduler.coordinator import ScheduleCoordinator
+
+    store, saved = store_with_schedule
+    coordinator = ScheduleCoordinator(hass, store)
+    coordinator.set_override(saved["id"], "switch.test", "off")
+    hass.data[DOMAIN] = {"test_entry": OnCueData(store=store, coordinator=coordinator)}
+
+    ws_get_overrides(hass, connection, {
+        "id": 1,
+        "type": "oncue_scheduler/get_overrides",
+        "schedule_id": saved["id"],
+    })
+
+    assert len(connection.results) == 1
+    _, result = connection.results[0]
+    assert result["overrides"] == {"switch.test": "off"}
+    assert "scheduled_states" in result

@@ -123,6 +123,9 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_save_schedule)
     websocket_api.async_register_command(hass, ws_delete_schedule)
     websocket_api.async_register_command(hass, ws_toggle_active)
+    websocket_api.async_register_command(hass, ws_set_override)
+    websocket_api.async_register_command(hass, ws_clear_override)
+    websocket_api.async_register_command(hass, ws_get_overrides)
 
 
 @websocket_api.websocket_command(
@@ -248,6 +251,78 @@ async def ws_toggle_active(
         connection.send_error(msg["id"], "not_found", "Schedule not found")
         return
     connection.send_result(msg["id"], {"schedule": schedule})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "oncue_scheduler/set_override",
+        vol.Required("schedule_id"): str,
+        vol.Required("entity_id"): str,
+        vol.Required("state"): vol.In(["on", "off"]),
+    }
+)
+@websocket_api.async_response
+async def ws_set_override(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    entry_id = _get_entry_id(hass)
+    if entry_id is None:
+        connection.send_error(msg["id"], "not_found", "Integration not configured")
+        return
+    coordinator = hass.data[DOMAIN][entry_id].coordinator
+    coordinator.set_override(msg["schedule_id"], msg["entity_id"], msg["state"])
+    # Apply immediately
+    await coordinator._async_evaluate()
+    connection.send_result(msg["id"], {"success": True})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "oncue_scheduler/clear_override",
+        vol.Required("schedule_id"): str,
+        vol.Required("entity_id"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_clear_override(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    entry_id = _get_entry_id(hass)
+    if entry_id is None:
+        connection.send_error(msg["id"], "not_found", "Integration not configured")
+        return
+    coordinator = hass.data[DOMAIN][entry_id].coordinator
+    coordinator.clear_override(msg["schedule_id"], msg["entity_id"])
+    # Re-evaluate to apply scheduled state immediately
+    await coordinator._async_evaluate()
+    connection.send_result(msg["id"], {"success": True})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "oncue_scheduler/get_overrides",
+        vol.Required("schedule_id"): str,
+    }
+)
+@callback
+def ws_get_overrides(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    entry_id = _get_entry_id(hass)
+    if entry_id is None:
+        connection.send_error(msg["id"], "not_found", "Integration not configured")
+        return
+    coordinator = hass.data[DOMAIN][entry_id].coordinator
+    connection.send_result(msg["id"], {
+        "overrides": coordinator.get_overrides(msg["schedule_id"]),
+        "scheduled_states": coordinator.get_scheduled_states(msg["schedule_id"]),
+    })
 
 
 def _get_entry_id(hass: HomeAssistant) -> str | None:

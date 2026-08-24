@@ -94,14 +94,14 @@
         <button class="theme-toggle" onclick="document.body.classList.toggle('dark')">Toggle Dark</button>
         <button class="narrow-toggle" onclick="toggleNarrow()">Toggle Narrow</button>
     </div>
-    <oncue-scheduler-panel></oncue-scheduler-panel>
+    <div id="panel-container" style="height: calc(100% - var(--header-height));"></div>
 
     <script type="module" src="./mock-hass.ts"></script>
     <script>
         function toggleNarrow()
         {
             const panel = document.querySelector('oncue-scheduler-panel');
-            panel.narrow = !panel.narrow;
+            if (panel) panel.narrow = !panel.narrow;
         }
     </script>
 </body>

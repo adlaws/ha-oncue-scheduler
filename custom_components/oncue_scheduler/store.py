@@ -15,8 +15,10 @@ from .const import (
     CADENCE_CUSTOM,
     CADENCE_DAILY,
     CADENCE_WEEKLY,
+    DEFAULT_REVERT_DELAY,
     DEFAULT_SLOT_MINUTES,
     MAX_CUSTOM_DAYS,
+    MAX_REVERT_DELAY,
     SIGNAL_SCHEDULES_UPDATED,
     SLOT_TYPE_ON_OFF,
     STORE_KEY,
@@ -30,6 +32,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def slots_per_day(slot_minutes: int) -> int:
+    """Return the number of time slots in a day."""
     return 24 * 60 // slot_minutes
 
 
@@ -94,6 +97,13 @@ def validate_schedule(data: dict[str, Any]) -> list[str]:
                     if err:
                         errors.append(f"slot '{key}' index {i}: {err}")
                         break
+
+    revert_delay = data.get("revert_delay")
+    if revert_delay is not None:
+        if not isinstance(revert_delay, (int, float)) or revert_delay < 0:
+            errors.append("revert_delay must be a non-negative number or null")
+        elif revert_delay > MAX_REVERT_DELAY:
+            errors.append(f"revert_delay must be at most {MAX_REVERT_DELAY} seconds")
 
     return errors
 
@@ -160,6 +170,7 @@ class ScheduleStore:
         data.setdefault("slot_type", SLOT_TYPE_ON_OFF)
         data.setdefault("start_date", None)
         data.setdefault("end_date", None)
+        data.setdefault("revert_delay", DEFAULT_REVERT_DELAY)
 
         if not data.get("slots"):
             data["slots"] = _default_slots(

@@ -16,6 +16,7 @@ interface MockSchedule {
     slot_minutes: number;
     slot_type: string;
     slots: Record<string, number[]>;
+    revert_delay: number | null;
 }
 
 const SLOTS_PER_DAY = 96;
@@ -54,6 +55,7 @@ store.set("sched_001", {
     slot_minutes: 15,
     slot_type: "on_off",
     slots: makeDailySlots(),
+    revert_delay: 180,
 });
 store.set("sched_002", {
     id: "sched_002",
@@ -67,6 +69,7 @@ store.set("sched_002", {
     slot_minutes: 15,
     slot_type: "on_off",
     slots: makeWeeklySlots(),
+    revert_delay: 180,
 });
 store.set("sched_003", {
     id: "sched_003",
@@ -80,9 +83,28 @@ store.set("sched_003", {
     slot_minutes: 15,
     slot_type: "on_off",
     slots: { "0": new Array(SLOTS_PER_DAY).fill(0) },
+    revert_delay: null,
 });
 
 let nextId = 4;
+
+// Runtime overrides: {schedule_id: {entity_id: "on"|"off"}}
+const overrides = new Map<string, Map<string, string>>();
+
+function getScheduledStates(scheduleId: string): Record<string, string> {
+    const s = store.get(scheduleId);
+    if (!s || !s.active) return {};
+    // Compute current slot index
+    const now = new Date();
+    const slotIndex = Math.floor((now.getHours() * 60 + now.getMinutes()) / 15);
+    let dayKey = "0";
+    if (s.cadence === "weekly") dayKey = String((now.getDay() + 6) % 7);
+    const daySlots = s.slots[dayKey];
+    if (!daySlots || slotIndex >= daySlots.length) return {};
+    const desired = daySlots[slotIndex];
+    const state = desired ? "on" : "off";
+    return Object.fromEntries(s.entity_ids.map((eid) => [eid, state]));
+}
 
 function summarise(s: MockSchedule) {
     return {
@@ -123,7 +145,30 @@ async function handleMessage(msg: Record<string, unknown>): Promise<any> {
 
         case "oncue_scheduler/delete": {
             store.delete(msg.schedule_id as string);
+            overrides.delete(msg.schedule_id as string);
             return {};
+        }
+
+        case "oncue_scheduler/set_override": {
+            const sid = msg.schedule_id as string;
+            if (!overrides.has(sid)) overrides.set(sid, new Map());
+            overrides.get(sid)!.set(msg.entity_id as string, msg.state as string);
+            return { success: true };
+        }
+
+        case "oncue_scheduler/clear_override": {
+            const sid = msg.schedule_id as string;
+            overrides.get(sid)?.delete(msg.entity_id as string);
+            return { success: true };
+        }
+
+        case "oncue_scheduler/get_overrides": {
+            const sid = msg.schedule_id as string;
+            const ov = overrides.get(sid);
+            return {
+                overrides: ov ? Object.fromEntries(ov) : {},
+                scheduled_states: getScheduledStates(sid),
+            };
         }
 
         default:
@@ -139,14 +184,38 @@ const mockHass = {
     },
     states: {
         "switch.living_room": { entity_id: "switch.living_room", state: "on", attributes: { friendly_name: "Living Room" } },
-        "light.hallway": { entity_id: "light.hallway", state: "off", attributes: { friendly_name: "Hallway Light" } },
         "switch.office_heater": { entity_id: "switch.office_heater", state: "on", attributes: { friendly_name: "Office Heater" } },
         "switch.desk_lamp": { entity_id: "switch.desk_lamp", state: "on", attributes: { friendly_name: "Desk Lamp" } },
         "switch.garden_valve": { entity_id: "switch.garden_valve", state: "off", attributes: { friendly_name: "Garden Valve" } },
+        "switch.kitchen_kettle": { entity_id: "switch.kitchen_kettle", state: "off", attributes: { friendly_name: "Kitchen Kettle" } },
+        "switch.garage_door": { entity_id: "switch.garage_door", state: "off", attributes: { friendly_name: "Garage Door" } },
+        "light.hallway": { entity_id: "light.hallway", state: "off", attributes: { friendly_name: "Hallway Light" } },
+        "light.bedroom": { entity_id: "light.bedroom", state: "off", attributes: { friendly_name: "Bedroom Light" } },
+        "light.porch": { entity_id: "light.porch", state: "on", attributes: { friendly_name: "Porch Light" } },
+        "fan.ceiling": { entity_id: "fan.ceiling", state: "off", attributes: { friendly_name: "Ceiling Fan" } },
+        "fan.bathroom_extractor": { entity_id: "fan.bathroom_extractor", state: "off", attributes: { friendly_name: "Bathroom Extractor" } },
+        "input_boolean.guest_mode": { entity_id: "input_boolean.guest_mode", state: "off", attributes: { friendly_name: "Guest Mode" } },
+        "sensor.temperature": { entity_id: "sensor.temperature", state: "22.5", attributes: { friendly_name: "Temperature" } },
+        "binary_sensor.front_door": { entity_id: "binary_sensor.front_door", state: "off", attributes: { friendly_name: "Front Door" } },
     },
 };
 
-// Inject into the panel element
-const panel = document.querySelector("oncue-scheduler-panel")!;
-(panel as any).hass = mockHass;
-(panel as any).panel = { config: { title: "OnCue Scheduler" } };
+// Create the panel element after hass is ready (avoids connectedCallback race)
+function mount() {
+    const container = document.getElementById("panel-container");
+    if (!container) return;
+    // Avoid double-mounting on HMR
+    if (container.querySelector("oncue-scheduler-panel")) return;
+    const panel = document.createElement("oncue-scheduler-panel") as any;
+    panel.hass = mockHass;
+    panel.panel = { config: { title: "OnCue Scheduler" } };
+    panel.style.display = "block";
+    panel.style.height = "100%";
+    container.appendChild(panel);
+}
+
+if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", mount);
+} else {
+    mount();
+}

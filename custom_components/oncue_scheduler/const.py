@@ -16,3 +16,6 @@ SLOT_TYPE_ON_OFF = "on_off"
 VALID_SLOT_TYPES = {SLOT_TYPE_ON_OFF}
 
 SIGNAL_SCHEDULES_UPDATED = f"{DOMAIN}_schedules_updated"
+
+DEFAULT_REVERT_DELAY = 180  # seconds (3 minutes)
+MAX_REVERT_DELAY = 3600  # 1 hour

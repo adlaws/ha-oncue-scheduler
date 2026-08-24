@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-SLOT_TYPE_ON_OFF = "on_off"
-VALID_SLOT_TYPES = {SLOT_TYPE_ON_OFF}
+from .const import SLOT_TYPE_ON_OFF, VALID_SLOT_TYPES
 
 
 def validate_slot_value(value: Any, slot_type: str) -> str | None:

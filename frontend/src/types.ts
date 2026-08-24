@@ -35,3 +35,8 @@ export interface HomeAssistant {
     };
     states: Record<string, any>;
 }
+
+export interface EntityOverrides {
+    overrides: Record<string, string>;
+    scheduled_states: Record<string, string>;
+}

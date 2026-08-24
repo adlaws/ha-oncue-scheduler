@@ -6,9 +6,12 @@ import logging
 from datetime import date, datetime
 from typing import Any
 
-from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
+from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
-from homeassistant.helpers.event import async_track_utc_time_change
+from homeassistant.helpers.event import (
+    async_track_state_change_event,
+    async_track_utc_time_change,
+)
 import homeassistant.util.dt as dt_util
 
 from .const import (
@@ -70,6 +73,13 @@ class ScheduleCoordinator:
         self._store = store
         self._unsub_time: CALLBACK_TYPE | None = None
         self._unsub_signal: CALLBACK_TYPE | None = None
+        self._unsub_state: CALLBACK_TYPE | None = None
+        # Runtime overrides: {schedule_id: {entity_id: "on"|"off"}}
+        self._overrides: dict[str, dict[str, str]] = {}
+        # Pending revert timers: {entity_id: cancel_callback}
+        self._revert_timers: dict[str, CALLBACK_TYPE] = {}
+        # Guard: entities currently being set by the coordinator itself
+        self._applying: set[str] = set()
 
     async def async_start(self) -> None:
         self._unsub_time = async_track_utc_time_change(
@@ -83,6 +93,7 @@ class ScheduleCoordinator:
             SIGNAL_SCHEDULES_UPDATED,
             self._async_on_schedules_updated,
         )
+        self._refresh_state_listeners()
         # Evaluate immediately on startup
         await self._async_evaluate()
 
@@ -94,11 +105,18 @@ class ScheduleCoordinator:
         if self._unsub_signal:
             self._unsub_signal()
             self._unsub_signal = None
+        if self._unsub_state:
+            self._unsub_state()
+            self._unsub_state = None
+        for cancel in self._revert_timers.values():
+            cancel()
+        self._revert_timers.clear()
 
     async def _async_on_tick(self, now: datetime) -> None:
         await self._async_evaluate()
 
     async def _async_on_schedules_updated(self) -> None:
+        self._refresh_state_listeners()
         await self._async_evaluate()
 
     async def _async_evaluate(self) -> None:
@@ -141,7 +159,12 @@ class ScheduleCoordinator:
             slot_type = schedule.get("slot_type", SLOT_TYPE_ON_OFF)
 
             for entity_id in schedule.get("entity_ids", []):
-                await self._async_apply_state(entity_id, desired_state, slot_type)
+                override = self._overrides.get(schedule["id"], {}).get(entity_id)
+                if override is not None:
+                    override_desired = 1 if override == "on" else 0
+                    await self._async_apply_state(entity_id, override_desired, slot_type)
+                else:
+                    await self._async_apply_state(entity_id, desired_state, slot_type)
 
     async def _async_apply_state(self, entity_id: str, desired: int, slot_type: str) -> None:
         state = self._hass.states.get(entity_id)
@@ -170,6 +193,7 @@ class ScheduleCoordinator:
             return
 
         service = "turn_on" if want_on else "turn_off"
+        self._applying.add(entity_id)
         try:
             await self._hass.services.async_call(
                 "homeassistant",
@@ -182,3 +206,158 @@ class ScheduleCoordinator:
                 "Failed to call %s on '%s'", service, entity_id,
                 exc_info=True,
             )
+        finally:
+            self._applying.discard(entity_id)
+
+    def set_override(self, schedule_id: str, entity_id: str, state: str) -> None:
+        """Set a runtime override for an entity in a schedule."""
+        self._overrides.setdefault(schedule_id, {})[entity_id] = state
+
+    def clear_override(self, schedule_id: str, entity_id: str) -> None:
+        """Clear a runtime override for an entity in a schedule."""
+        if schedule_id in self._overrides:
+            self._overrides[schedule_id].pop(entity_id, None)
+            if not self._overrides[schedule_id]:
+                del self._overrides[schedule_id]
+
+    def get_overrides(self, schedule_id: str) -> dict[str, str]:
+        """Return current overrides for a schedule: {entity_id: "on"|"off"}."""
+        return dict(self._overrides.get(schedule_id, {}))
+
+    def get_scheduled_states(self, schedule_id: str) -> dict[str, str]:
+        """Return what each entity's scheduled state is right now."""
+        schedule = self._store.schedules.get(schedule_id)
+        if not schedule or not schedule.get("active"):
+            return {}
+
+        local_now = dt_util.now()
+        local_date = local_now.date()
+        slot_minutes = schedule.get("slot_minutes", 15)
+        slot_index = compute_slot_index(local_now, slot_minutes)
+        day_key = compute_day_key(schedule, local_date)
+        if day_key is None:
+            return {}
+
+        day_slots = schedule.get("slots", {}).get(day_key)
+        if not day_slots or slot_index >= len(day_slots):
+            return {}
+
+        slot_type = schedule.get("slot_type", SLOT_TYPE_ON_OFF)
+        desired = day_slots[slot_index]
+        result = interpret_slot_value(desired, slot_type)
+        action = result["action"]
+        if action == "none":
+            scheduled_state = "off"
+        else:
+            scheduled_state = "on" if action == "turn_on" else "off"
+
+        return {eid: scheduled_state for eid in schedule.get("entity_ids", [])}
+
+    @callback
+    def _refresh_state_listeners(self) -> None:
+        """Rebuild the state change listener for all managed entity IDs."""
+        if self._unsub_state:
+            self._unsub_state()
+            self._unsub_state = None
+
+        entity_ids: set[str] = set()
+        for schedule in self._store.schedules.values():
+            if schedule.get("active"):
+                entity_ids.update(schedule.get("entity_ids", []))
+
+        if entity_ids:
+            self._unsub_state = async_track_state_change_event(
+                self._hass, list(entity_ids), self._on_state_changed
+            )
+
+    @callback
+    def _on_state_changed(self, event: Event) -> None:
+        """Handle an external state change on a managed entity."""
+        entity_id = event.data.get("entity_id", "")
+
+        # Ignore state changes caused by the coordinator itself
+        if entity_id in self._applying:
+            return
+
+        new_state = event.data.get("new_state")
+        old_state = event.data.get("old_state")
+        if new_state is None or old_state is None:
+            return
+        if new_state.state == old_state.state:
+            return
+
+        # Find schedules that manage this entity and have revert enabled
+        for schedule in self._store.schedules.values():
+            if not schedule.get("active"):
+                continue
+            if entity_id not in schedule.get("entity_ids", []):
+                continue
+
+            revert_delay = schedule.get("revert_delay")
+            if revert_delay is None or revert_delay <= 0:
+                continue
+
+            # Determine the desired state (override takes priority)
+            desired = self._get_desired_state(schedule, entity_id)
+            if desired is None:
+                continue
+
+            if new_state.state == desired:
+                # State matches what we want — cancel any pending revert
+                self._cancel_revert(entity_id)
+                continue
+
+            _LOGGER.info(
+                "External state change on '%s' (now %s, want %s); "
+                "will revert in %s seconds",
+                entity_id, new_state.state, desired, revert_delay,
+            )
+            self._schedule_revert(entity_id, desired, revert_delay)
+
+    def _get_desired_state(
+        self, schedule: dict[str, Any], entity_id: str
+    ) -> str | None:
+        """Return the desired state for an entity: override > scheduled."""
+        override = self._overrides.get(schedule["id"], {}).get(entity_id)
+        if override is not None:
+            return override
+
+        local_now = dt_util.now()
+        slot_minutes = schedule.get("slot_minutes", 15)
+        slot_index = compute_slot_index(local_now, slot_minutes)
+        day_key = compute_day_key(schedule, local_now.date())
+        if day_key is None:
+            return None
+
+        day_slots = schedule.get("slots", {}).get(day_key)
+        if not day_slots or slot_index >= len(day_slots):
+            return None
+
+        slot_type = schedule.get("slot_type", SLOT_TYPE_ON_OFF)
+        result = interpret_slot_value(day_slots[slot_index], slot_type)
+        action = result["action"]
+        if action == "none":
+            return "off"
+        return "on" if action == "turn_on" else "off"
+
+    def _schedule_revert(
+        self, entity_id: str, desired: str, delay: int
+    ) -> None:
+        """Schedule a delayed revert for an entity."""
+        self._cancel_revert(entity_id)
+
+        async def _do_revert(_now: datetime) -> None:
+            self._revert_timers.pop(entity_id, None)
+            desired_int = 1 if desired == "on" else 0
+            await self._async_apply_state(entity_id, desired_int, SLOT_TYPE_ON_OFF)
+
+        cancel = self._hass.helpers.event.async_call_later(
+            delay, _do_revert
+        )
+        self._revert_timers[entity_id] = cancel
+
+    def _cancel_revert(self, entity_id: str) -> None:
+        """Cancel a pending revert timer for an entity."""
+        cancel = self._revert_timers.pop(entity_id, None)
+        if cancel:
+            cancel()

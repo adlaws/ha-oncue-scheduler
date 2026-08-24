@@ -68,12 +68,29 @@ export class ScheduleList extends LitElement {
         height: 8px;
         border-radius: 50%;
         flex-shrink: 0;
+        cursor: pointer;
+        position: relative;
       }
       .status-dot.active {
         background: var(--success-color, #4caf50);
       }
       .status-dot.paused {
         background: var(--disabled-text-color, #bdbdbd);
+      }
+      .toggle-btn {
+        background: none;
+        border: 1px solid var(--divider-color, #e0e0e0);
+        border-radius: 4px;
+        padding: 2px 8px;
+        font-size: 11px;
+        color: var(--secondary-text-color, #727272);
+        cursor: pointer;
+        flex-shrink: 0;
+        line-height: 1.4;
+      }
+      .toggle-btn:hover {
+        background: var(--secondary-background-color, #f5f5f5);
+        color: var(--primary-text-color, #212121);
       }
       .empty {
         padding: 24px 16px;
@@ -107,9 +124,14 @@ export class ScheduleList extends LitElement {
                     <div class="item-name">${s.name}</div>
                     <div class="item-meta">
                       <span class="badge badge-${s.cadence}">${s.cadence}</span>
-                      ${s.entity_ids.length} entity${s.entity_ids.length !== 1 ? "ies" : "y"}
+                      ${s.entity_ids.length} ${s.entity_ids.length !== 1 ? "entities" : "entity"}
                     </div>
                   </div>
+                  <button
+                    class="toggle-btn"
+                    title=${s.active ? "Pause schedule" : "Resume schedule"}
+                    @click=${(e: Event) => { e.stopPropagation(); this._onToggleActive(s.id, !s.active); }}
+                  >${s.active ? "Pause" : "Resume"}</button>
                 </div>
               `
                 )}
@@ -126,6 +148,16 @@ export class ScheduleList extends LitElement {
     private _onAdd() {
         this.dispatchEvent(
             new CustomEvent("schedule-add", { bubbles: true, composed: true })
+        );
+    }
+
+    private _onToggleActive(id: string, active: boolean) {
+        this.dispatchEvent(
+            new CustomEvent("schedule-toggle-active", {
+                detail: { id, active },
+                bubbles: true,
+                composed: true,
+            })
         );
     }
 }

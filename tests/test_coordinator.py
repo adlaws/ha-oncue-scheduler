@@ -520,3 +520,105 @@ async def test_coordinator_uses_slot_type(hass):
     hass.services.async_call.assert_called_once_with(
         "homeassistant", "turn_on", {"entity_id": "switch.test"}, blocking=True
     )
+
+
+@pytest.mark.asyncio
+async def test_coordinator_override_takes_priority(hass):
+    """An override forces the entity to the overridden state."""
+    from oncue_scheduler.store import ScheduleStore
+    from oncue_scheduler.coordinator import ScheduleCoordinator
+
+    store = ScheduleStore(hass)
+    await store.async_load()
+
+    slots = [0] * 96  # All off
+    saved = await store.async_save_schedule({
+        "name": "Override Test",
+        "entity_ids": ["switch.test"],
+        "cadence": "daily",
+        "slots": {"0": slots},
+    })
+
+    mock_state = MagicMock()
+    mock_state.state = "off"
+    hass.states.get = MagicMock(return_value=mock_state)
+
+    coordinator = ScheduleCoordinator(hass, store)
+    coordinator.set_override(saved["id"], "switch.test", "on")
+
+    with patch("oncue_scheduler.coordinator.dt_util") as mock_dt:
+        mock_dt.now.return_value = datetime(2025, 1, 6, 0, 0, tzinfo=timezone.utc)
+        await coordinator._async_evaluate()
+
+    hass.services.async_call.assert_called_once_with(
+        "homeassistant", "turn_on", {"entity_id": "switch.test"}, blocking=True
+    )
+
+
+@pytest.mark.asyncio
+async def test_coordinator_clear_override(hass):
+    """Clearing an override removes it and returns empty overrides."""
+    from oncue_scheduler.store import ScheduleStore
+    from oncue_scheduler.coordinator import ScheduleCoordinator
+
+    store = ScheduleStore(hass)
+    await store.async_load()
+
+    slots = [0] * 96
+    saved = await store.async_save_schedule({
+        "name": "Clear Override",
+        "entity_ids": ["switch.test"],
+        "cadence": "daily",
+        "slots": {"0": slots},
+    })
+
+    coordinator = ScheduleCoordinator(hass, store)
+    coordinator.set_override(saved["id"], "switch.test", "on")
+    coordinator.clear_override(saved["id"], "switch.test")
+    assert coordinator.get_overrides(saved["id"]) == {}
+
+
+@pytest.mark.asyncio
+async def test_get_scheduled_states(hass):
+    """get_scheduled_states returns the current slot's desired state."""
+    from oncue_scheduler.store import ScheduleStore
+    from oncue_scheduler.coordinator import ScheduleCoordinator
+
+    store = ScheduleStore(hass)
+    await store.async_load()
+
+    slots = [1] * 96
+    saved = await store.async_save_schedule({
+        "name": "States Test",
+        "entity_ids": ["switch.a", "switch.b"],
+        "cadence": "daily",
+        "slots": {"0": slots},
+    })
+
+    coordinator = ScheduleCoordinator(hass, store)
+
+    with patch("oncue_scheduler.coordinator.dt_util") as mock_dt:
+        mock_dt.now.return_value = datetime(2025, 1, 6, 12, 0, tzinfo=timezone.utc)
+        states = coordinator.get_scheduled_states(saved["id"])
+
+    assert states == {"switch.a": "on", "switch.b": "on"}
+
+
+@pytest.mark.asyncio
+async def test_get_scheduled_states_inactive(hass):
+    """get_scheduled_states returns empty dict for inactive schedules."""
+    from oncue_scheduler.store import ScheduleStore
+    from oncue_scheduler.coordinator import ScheduleCoordinator
+
+    store = ScheduleStore(hass)
+    await store.async_load()
+
+    saved = await store.async_save_schedule({
+        "name": "Inactive",
+        "entity_ids": ["switch.test"],
+        "cadence": "daily",
+    })
+    await store.async_set_active(saved["id"], False)
+
+    coordinator = ScheduleCoordinator(hass, store)
+    assert coordinator.get_scheduled_states(saved["id"]) == {}

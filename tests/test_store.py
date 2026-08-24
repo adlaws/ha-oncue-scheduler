@@ -286,3 +286,69 @@ async def test_save_preserves_explicit_slot_type(store):
     }
     result = await store.async_save_schedule(data)
     assert result["slot_type"] == "on_off"
+
+
+def test_slots_per_day():
+    from oncue_scheduler.store import slots_per_day
+    assert slots_per_day(15) == 96
+    assert slots_per_day(30) == 48
+    assert slots_per_day(60) == 24
+
+
+@pytest.mark.asyncio
+async def test_validation_rejects_negative_revert_delay(store):
+    data = {
+        "name": "Negative Revert",
+        "entity_ids": ["switch.test"],
+        "cadence": "daily",
+        "revert_delay": -10,
+    }
+    with pytest.raises(ValueError, match="revert_delay"):
+        await store.async_save_schedule(data)
+
+
+@pytest.mark.asyncio
+async def test_validation_rejects_excessive_revert_delay(store):
+    data = {
+        "name": "Too Long Revert",
+        "entity_ids": ["switch.test"],
+        "cadence": "daily",
+        "revert_delay": 7200,
+    }
+    with pytest.raises(ValueError, match="revert_delay"):
+        await store.async_save_schedule(data)
+
+
+@pytest.mark.asyncio
+async def test_save_defaults_revert_delay(store):
+    data = {
+        "name": "Default Revert",
+        "entity_ids": ["switch.test"],
+        "cadence": "daily",
+    }
+    result = await store.async_save_schedule(data)
+    assert result["revert_delay"] == 180
+
+
+@pytest.mark.asyncio
+async def test_save_accepts_null_revert_delay(store):
+    data = {
+        "name": "No Revert",
+        "entity_ids": ["switch.test"],
+        "cadence": "daily",
+        "revert_delay": None,
+    }
+    result = await store.async_save_schedule(data)
+    assert result["revert_delay"] is None
+
+
+@pytest.mark.asyncio
+async def test_validation_rejects_invalid_slot_values(store):
+    data = {
+        "name": "Bad Slots",
+        "entity_ids": ["switch.test"],
+        "cadence": "daily",
+        "slots": {"0": [2] + [0] * 95},
+    }
+    with pytest.raises(ValueError, match="slot"):
+        await store.async_save_schedule(data)

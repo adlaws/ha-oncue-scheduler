@@ -68,6 +68,7 @@ _vol.Required = _VolRequired
 _vol.Optional = _VolRequired
 _vol.Schema = _VolSchema
 _vol.ALLOW_EXTRA = "ALLOW_EXTRA"
+_vol.In = lambda choices: choices
 sys.modules["voluptuous"] = _vol
 import voluptuous as vol  # noqa: E402, F811
 
@@ -89,13 +90,11 @@ class _MockHomeAssistant:
         self.components = MagicMock()
         self.async_create_task = MagicMock()
 
-    def async_create_task(self, coro):
-        pass
-
 
 _ha_core.HomeAssistant = _MockHomeAssistant
 _ha_core.callback = lambda f: f
 _ha_core.CALLBACK_TYPE = type(None)
+_ha_core.Event = MagicMock
 
 # Platform enum
 class _Platform:
@@ -195,7 +194,11 @@ _ha_helpers_dispatcher.async_dispatcher_connect = _async_dispatcher_connect
 def _async_track_utc_time_change(hass, callback, **kwargs):
     return lambda: None
 
+def _async_track_state_change_event(hass, entity_ids, callback):
+    return lambda: None
+
 _ha_helpers_event.async_track_utc_time_change = _async_track_utc_time_change
+_ha_helpers_event.async_track_state_change_event = _async_track_state_change_event
 
 # dt_util stub
 from datetime import datetime, timezone

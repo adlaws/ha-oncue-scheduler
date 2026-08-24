@@ -3,6 +3,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles } from "./styles";
 import type { Schedule, Conflict, HomeAssistant } from "./types";
 import "./schedule-grid";
+import "./entity-picker";
 import "./toast-notification";
 import type { ToastNotification } from "./toast-notification";
 
@@ -37,7 +38,7 @@ export class ScheduleEditor extends LitElement {
     @property({ type: Boolean }) isNew = false;
 
     @state() private _name = "";
-    @state() private _entityIds = "";
+    @state() private _entityIds: string[] = [];
     @state() private _cadence: "daily" | "weekly" | "custom" = "daily";
     @state() private _repeat = true;
     @state() private _startDate = "";
@@ -49,6 +50,10 @@ export class ScheduleEditor extends LitElement {
     @state() private _dirty = false;
     @state() private _confirmDelete = false;
     @state() private _confirmDiscard = false;
+    @state() private _active = true;
+    @state() private _overrides: Record<string, string> = {};
+    @state() private _scheduledStates: Record<string, string> = {};
+    @state() private _revertDelay: number | null = 180;
 
     static styles = [
         sharedStyles,
@@ -92,6 +97,31 @@ export class ScheduleEditor extends LitElement {
       textarea {
         min-height: 60px;
         resize: vertical;
+      }
+      .revert-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+      .revert-row input[type="number"] {
+        width: 60px;
+        text-align: center;
+      }
+      .revert-row span {
+        font-size: 13px;
+        color: var(--secondary-text-color, #727272);
+      }
+      .never-label {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 13px;
+        margin-left: 8px;
+        cursor: pointer;
+      }
+      .never-label input[type="checkbox"] {
+        width: auto;
       }
       .grid-section {
         margin-top: 16px;
@@ -153,6 +183,29 @@ export class ScheduleEditor extends LitElement {
         font-size: 12px;
         padding: 4px 8px;
       }
+      .status-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 13px;
+        font-weight: 500;
+      }
+      .status-toggle button {
+        font-size: 12px;
+        padding: 4px 10px;
+      }
+      .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        display: inline-block;
+      }
+      .status-dot.active {
+        background: var(--success-color, #4caf50);
+      }
+      .status-dot.paused {
+        background: var(--disabled-text-color, #bdbdbd);
+      }
     `,
     ];
 
@@ -161,6 +214,7 @@ export class ScheduleEditor extends LitElement {
             this._loadFromSchedule();
             this._confirmDelete = false;
             this._confirmDiscard = false;
+            this._loadOverrides();
         }
     }
 
@@ -175,20 +229,26 @@ export class ScheduleEditor extends LitElement {
     private _loadFromSchedule() {
         if (this.schedule) {
             this._name = this.schedule.name;
-            this._entityIds = this.schedule.entity_ids.join("\n");
+            this._entityIds = [...this.schedule.entity_ids];
             this._cadence = this.schedule.cadence;
             this._repeat = this.schedule.repeat;
             this._startDate = this.schedule.start_date ?? "";
             this._endDate = this.schedule.end_date ?? "";
             this._slots = JSON.parse(JSON.stringify(this.schedule.slots));
+            this._active = this.schedule.active;
+            this._revertDelay = "revert_delay" in (this.schedule as any)
+                ? (this.schedule as any).revert_delay
+                : 180;
         } else {
             this._name = "";
-            this._entityIds = "";
+            this._entityIds = [];
             this._cadence = "daily";
             this._repeat = true;
             this._startDate = "";
             this._endDate = "";
             this._slots = defaultSlots("daily");
+            this._active = true;
+            this._revertDelay = 180;
         }
         this._dirty = false;
         this._conflicts = [];
@@ -211,7 +271,19 @@ export class ScheduleEditor extends LitElement {
       <div class="editor-wrapper">
       ${busy ? html`<div class="loading-overlay"><div class="spinner"></div></div>` : nothing}
       <div class="editor-header">
-        <h2>${this.isNew ? "New Schedule" : "Edit Schedule"}</h2>
+        <h2>${this.isNew ? "New Schedule" : "Edit Schedule"}
+          ${!this.isNew
+                ? html`
+              <span class="status-toggle">
+                <span class="status-dot ${this._active ? "active" : "paused"}"></span>
+                ${this._active ? "Active" : "Paused"}
+                <button class="secondary" @click=${this._toggleActive}>
+                  ${this._active ? "Pause" : "Resume"}
+                </button>
+              </span>
+            `
+                : nothing}
+        </h2>
         <div class="actions">
           ${this._confirmDiscard
                 ? html`
@@ -264,16 +336,20 @@ export class ScheduleEditor extends LitElement {
         </div>
 
         <div class="form-group full-width">
-          <label for="entities">Entity IDs (one per line)</label>
-          <textarea
-            id="entities"
-            .value=${this._entityIds}
-            @input=${(e: InputEvent) => {
-                this._entityIds = (e.target as HTMLTextAreaElement).value;
+          <label>Entities</label>
+          <entity-picker
+            .hass=${this.hass}
+            .selectedIds=${this._entityIds}
+            .overrides=${this._overrides}
+            .scheduledStates=${this._scheduledStates}
+            .showOverrides=${!this.isNew}
+            @entities-changed=${(e: CustomEvent) => {
+                this._entityIds = e.detail.entityIds;
                 this._dirty = true;
             }}
-            placeholder="switch.living_room&#10;light.bedroom"
-          ></textarea>
+            @override-set=${this._onOverrideSet}
+            @override-clear=${this._onOverrideClear}
+          ></entity-picker>
         </div>
 
         <div class="form-group">
@@ -297,6 +373,53 @@ export class ScheduleEditor extends LitElement {
         <div class="form-group">
           <label>Slot Type</label>
           <input type="text" value="On/Off" disabled />
+        </div>
+
+        <div class="form-group full-width">
+          <label>Revert external changes after</label>
+          <div class="revert-row">
+            <input
+              type="number"
+              min="0"
+              max="59"
+              style="width: 60px"
+              .value=${this._revertDelay !== null ? String(Math.floor(this._revertDelay / 60)) : "0"}
+              ?disabled=${this._revertDelay === null}
+              @input=${(e: InputEvent) => {
+                const mins = parseInt((e.target as HTMLInputElement).value) || 0;
+                const secs = (this._revertDelay ?? 0) % 60;
+                this._revertDelay = mins * 60 + secs;
+                this._dirty = true;
+            }}
+            />
+            <span>min</span>
+            <input
+              type="number"
+              min="0"
+              max="59"
+              style="width: 60px"
+              .value=${this._revertDelay !== null ? String((this._revertDelay) % 60) : "0"}
+              ?disabled=${this._revertDelay === null}
+              @input=${(e: InputEvent) => {
+                const secs = parseInt((e.target as HTMLInputElement).value) || 0;
+                const mins = Math.floor((this._revertDelay ?? 0) / 60);
+                this._revertDelay = mins * 60 + secs;
+                this._dirty = true;
+            }}
+            />
+            <span>sec</span>
+            <label class="never-label">
+              <input
+                type="checkbox"
+                .checked=${this._revertDelay === null}
+                @change=${(e: Event) => {
+                this._revertDelay = (e.target as HTMLInputElement).checked ? null : 180;
+                this._dirty = true;
+            }}
+              />
+              Never
+            </label>
+          </div>
         </div>
 
         ${this._cadence === "custom"
@@ -374,10 +497,7 @@ export class ScheduleEditor extends LitElement {
             this._showToast("Name is required", "error");
             return;
         }
-        const entityIds = this._entityIds
-            .split(/[\n,]+/)
-            .map((s) => s.trim())
-            .filter(Boolean);
+        const entityIds = this._entityIds;
         if (entityIds.length === 0) {
             this._showToast("At least one entity ID is required", "error");
             return;
@@ -392,10 +512,11 @@ export class ScheduleEditor extends LitElement {
                 repeat: this._cadence === "custom" ? this._repeat : true,
                 start_date: this._cadence === "custom" ? this._startDate || null : null,
                 end_date: this._cadence === "custom" ? this._endDate || null : null,
-                active: this.schedule?.active ?? true,
+                active: this._active,
                 slot_minutes: 15,
                 slot_type: "on_off",
                 slots: this._slots,
+                revert_delay: this._revertDelay,
             };
             if (this.schedule?.id) {
                 schedule.id = this.schedule.id;
@@ -440,6 +561,65 @@ export class ScheduleEditor extends LitElement {
         this.dispatchEvent(
             new CustomEvent("editor-cancel", { bubbles: true, composed: true })
         );
+    }
+
+    private _toggleActive() {
+        this._active = !this._active;
+        this._dirty = true;
+    }
+
+    private async _loadOverrides() {
+        if (!this.schedule?.id) {
+            this._overrides = {};
+            this._scheduledStates = {};
+            return;
+        }
+        try {
+            const result = await this.hass.connection.sendMessagePromise({
+                type: "oncue_scheduler/get_overrides",
+                schedule_id: this.schedule.id,
+            });
+            this._overrides = result.overrides ?? {};
+            this._scheduledStates = result.scheduled_states ?? {};
+        } catch {
+            this._overrides = {};
+            this._scheduledStates = {};
+        }
+    }
+
+    private async _onOverrideSet(e: CustomEvent) {
+        if (!this.schedule?.id) return;
+        const { entityId, state } = e.detail;
+        try {
+            await this.hass.connection.sendMessagePromise({
+                type: "oncue_scheduler/set_override",
+                schedule_id: this.schedule.id,
+                entity_id: entityId,
+                state,
+            });
+            this._overrides = { ...this._overrides, [entityId]: state };
+        } catch (err) {
+            console.error("Failed to set override:", err);
+            this._showToast("Failed to set override", "error");
+        }
+    }
+
+    private async _onOverrideClear(e: CustomEvent) {
+        if (!this.schedule?.id) return;
+        const { entityId } = e.detail;
+        try {
+            await this.hass.connection.sendMessagePromise({
+                type: "oncue_scheduler/clear_override",
+                schedule_id: this.schedule.id,
+                entity_id: entityId,
+            });
+            const updated = { ...this._overrides };
+            delete updated[entityId];
+            this._overrides = updated;
+        } catch (err) {
+            console.error("Failed to clear override:", err);
+            this._showToast("Failed to clear override", "error");
+        }
     }
 
     private _doDiscard() {

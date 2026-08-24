@@ -105,6 +105,7 @@ export class OnCuePanel extends LitElement {
             .selectedId=${this._selectedSchedule?.id ?? null}
             @schedule-selected=${this._onScheduleSelected}
             @schedule-add=${this._onAddSchedule}
+            @schedule-toggle-active=${this._onToggleActive}
           ></schedule-list>
         </div>
         <div class="main">
@@ -196,5 +197,28 @@ export class OnCuePanel extends LitElement {
 
     private _toggleSidebar() {
         this._sidebarOpen = !this._sidebarOpen;
+    }
+
+    private async _onToggleActive(e: CustomEvent) {
+        const { id, active } = e.detail;
+        try {
+            const result = await this.hass.connection.sendMessagePromise({
+                type: "oncue_scheduler/get",
+                schedule_id: id,
+            });
+            const schedule = result.schedule;
+            if (!schedule) return;
+            schedule.active = active;
+            await this.hass.connection.sendMessagePromise({
+                type: "oncue_scheduler/save",
+                schedule,
+            });
+            await this._loadSchedules();
+            if (this._selectedSchedule?.id === id) {
+                this._selectedSchedule = { ...this._selectedSchedule, active };
+            }
+        } catch (err) {
+            console.error("Failed to toggle schedule active state:", err);
+        }
     }
 }

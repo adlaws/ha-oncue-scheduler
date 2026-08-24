@@ -218,5 +218,27 @@
       "filePath": "skills/ai/prompt-enhancer"
     },
     "contentHash": "e1eedbc85fc605692d8ad4325c314bbb97cfa6436e455ebc976532a86d704726"
+  },
+  "python-developer": {
+    "sha": "1b49ffeb537a77583cdf7f920d343cf8c1cba987",
+    "installedAt": "2026-08-24T01:23:09.655Z",
+    "sourceRepo": {
+      "owner": "adlaws",
+      "repo": "ai-skills-collection",
+      "branch": "master",
+      "filePath": "skills/qa/python-developer"
+    },
+    "contentHash": "2fd151d83e154dcc13d7b7841bb6ff175847ac30c0fcb7dfc497554fdd078954"
+  },
+  "python-reviewer": {
+    "sha": "1788b53b3fdda6de710f33ff408dfead4ddc7ae7",
+    "installedAt": "2026-08-24T01:23:09.802Z",
+    "sourceRepo": {
+      "owner": "adlaws",
+      "repo": "ai-skills-collection",
+      "branch": "master",
+      "filePath": "skills/qa/python-reviewer"
+    },
+    "contentHash": "2fd151d83e154dcc13d7b7841bb6ff175847ac30c0fcb7dfc497554fdd078954"
   }
 }
