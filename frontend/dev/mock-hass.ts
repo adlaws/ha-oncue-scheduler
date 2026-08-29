@@ -186,6 +186,7 @@ async function handleMessage(msg: Record<string, unknown>): Promise<any> {
 const mockHass = {
     connection: {
         sendMessagePromise: handleMessage,
+        subscribeEvents: async () => () => { },
     },
     states: {
         "switch.living_room": { entity_id: "switch.living_room", state: "on", attributes: { friendly_name: "Living Room" } },

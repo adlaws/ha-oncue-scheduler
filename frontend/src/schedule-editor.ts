@@ -58,6 +58,35 @@ export class ScheduleEditor extends LitElement {
     @state() private _slotType: string = "on_off";
     @state() private _palette: string[] = ["#ff0000", "#00ff00", "#0000ff", "#ffff00", "#ff00ff", "#00ffff", "#ff8800", "#ffffff"];
 
+    private _unsubOverrides: (() => void) | null = null;
+
+    connectedCallback() {
+        super.connectedCallback();
+        this._subscribeOverrideEvents();
+    }
+
+    disconnectedCallback() {
+        super.disconnectedCallback();
+        this._unsubOverrides?.();
+        this._unsubOverrides = null;
+    }
+
+    private async _subscribeOverrideEvents() {
+        try {
+            this._unsubOverrides = await this.hass.connection.subscribeEvents(
+                (event: any) => {
+                    const scheduleId = event.data?.schedule_id;
+                    if (scheduleId && this.schedule?.id === scheduleId) {
+                        this._loadOverrides();
+                    }
+                },
+                "oncue_scheduler_overrides_changed",
+            );
+        } catch {
+            // Subscription not supported in mock/test environments
+        }
+    }
+
     static styles = [
         sharedStyles,
         css`

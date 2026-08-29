@@ -20,5 +20,7 @@ MAX_PALETTE_SIZE = 10
 
 SIGNAL_SCHEDULES_UPDATED = f"{DOMAIN}_schedules_updated"
 
+EVENT_OVERRIDES_CHANGED = f"{DOMAIN}_overrides_changed"
+
 DEFAULT_REVERT_DELAY = 180  # seconds (3 minutes)
 MAX_REVERT_DELAY = 3600  # 1 hour

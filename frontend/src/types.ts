@@ -33,6 +33,7 @@ export interface Conflict {
 export interface HomeAssistant {
     connection: {
         sendMessagePromise(msg: Record<string, unknown>): Promise<any>;
+        subscribeEvents(callback: (event: any) => void, eventType: string): Promise<() => void>;
     };
     states: Record<string, any>;
 }

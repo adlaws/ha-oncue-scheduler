@@ -85,6 +85,8 @@ class _MockHomeAssistant:
         self.states = MagicMock()
         self.services = MagicMock()
         self.services.async_call = AsyncMock()
+        self.bus = MagicMock()
+        self.bus.async_fire = MagicMock()
         self.config_entries = MagicMock()
         self.config_entries.async_forward_entry_setups = AsyncMock()
         self.config_entries.async_unload_platforms = AsyncMock(return_value=True)

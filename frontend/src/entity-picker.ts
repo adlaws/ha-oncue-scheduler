@@ -6,6 +6,25 @@ import type { HomeAssistant } from "./types";
 const SUPPORTED_DOMAINS = ["switch", "light", "fan", "input_boolean"];
 const COLOR_MODES = ["rgb", "rgbw", "rgbww", "hs", "xy"];
 
+const DOMAIN_ICONS: Record<string, string> = {
+    switch: "mdi:toggle-switch-variant",
+    light: "mdi:lightbulb",
+    fan: "mdi:fan",
+    cover: "mdi:window-shutter",
+    climate: "mdi:thermostat",
+    sensor: "mdi:eye",
+    binary_sensor: "mdi:checkbox-blank-circle",
+    input_boolean: "mdi:toggle-switch-variant-off",
+    automation: "mdi:robot",
+    script: "mdi:script-text",
+    scene: "mdi:palette",
+    media_player: "mdi:cast",
+    vacuum: "mdi:robot-vacuum",
+    lock: "mdi:lock",
+    humidifier: "mdi:air-humidifier",
+    water_heater: "mdi:thermometer",
+};
+
 @customElement("entity-picker")
 export class EntityPicker extends LitElement {
     @property({ attribute: false }) hass!: HomeAssistant;
@@ -254,9 +273,7 @@ export class EntityPicker extends LitElement {
         return html`
       <div class="entity-row ${rowClass}">
         <span class="entity-name">
-          <ha-icon .icon=${this._entityIcon(id) ?? ""}
-            style="visibility: ${this._entityIcon(id) ? 'visible' : 'hidden'}"
-          ></ha-icon>
+          <ha-icon .icon=${this._entityIcon(id)}></ha-icon>
           ${this._friendlyName(id)}
           <span class="entity-id">${id}</span>
         </span>
@@ -303,8 +320,10 @@ export class EntityPicker extends LitElement {
         return this.hass?.states?.[id]?.attributes?.friendly_name ?? id;
     }
 
-    private _entityIcon(id: string): string | undefined {
-        return this.hass?.states?.[id]?.attributes?.icon;
+    private _entityIcon(id: string): string {
+        return this.hass?.states?.[id]?.attributes?.icon
+            ?? DOMAIN_ICONS[id.split(".")[0]]
+            ?? "mdi:puzzle";
     }
 
     private _onInput(e: InputEvent) {

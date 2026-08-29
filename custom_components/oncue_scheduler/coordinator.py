@@ -18,6 +18,7 @@ from .const import (
     CADENCE_CUSTOM,
     CADENCE_DAILY,
     CADENCE_WEEKLY,
+    EVENT_OVERRIDES_CHANGED,
     SIGNAL_SCHEDULES_UPDATED,
     SLOT_TYPE_ON_OFF,
 )
@@ -238,6 +239,9 @@ class ScheduleCoordinator:
     def set_override(self, schedule_id: str, entity_id: str, state: str) -> None:
         """Set a runtime override for an entity in a schedule."""
         self._overrides.setdefault(schedule_id, {})[entity_id] = state
+        self._hass.bus.async_fire(
+            EVENT_OVERRIDES_CHANGED, {"schedule_id": schedule_id}
+        )
 
     def clear_override(self, schedule_id: str, entity_id: str) -> None:
         """Clear a runtime override for an entity in a schedule."""
@@ -245,6 +249,9 @@ class ScheduleCoordinator:
             self._overrides[schedule_id].pop(entity_id, None)
             if not self._overrides[schedule_id]:
                 del self._overrides[schedule_id]
+            self._hass.bus.async_fire(
+                EVENT_OVERRIDES_CHANGED, {"schedule_id": schedule_id}
+            )
 
     def get_overrides(self, schedule_id: str) -> dict[str, str]:
         """Return current overrides for a schedule: {entity_id: "on"|"off"}."""
