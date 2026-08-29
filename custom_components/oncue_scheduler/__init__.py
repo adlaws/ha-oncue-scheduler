@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,6 +28,8 @@ PANEL_URL = "/oncue_scheduler/panel"
 PANEL_ICON = "mdi:calendar-clock"
 PANEL_TITLE = "OnCue"
 FRONTEND_DIR = Path(__file__).parent / "frontend"
+_MANIFEST = json.loads((Path(__file__).parent / "manifest.json").read_text())
+VERSION = _MANIFEST["version"]
 
 
 @dataclass
@@ -72,7 +75,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "name": "oncue-scheduler-panel",
             "embed_iframe": False,
             "trust_external": False,
-            "js_url": PANEL_URL,
+            "js_url": f"{PANEL_URL}?v={VERSION}",
         }},
     )
 

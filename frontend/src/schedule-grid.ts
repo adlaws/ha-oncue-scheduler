@@ -3,6 +3,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles } from "./styles";
 
 const SLOTS_PER_DAY = 96;
+const MOBILE_SLOTS_PER_ROW = 16;
 const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 const DAY_KEYS_WEEKLY = ["0", "1", "2", "3", "4", "5", "6"];
 
@@ -24,9 +25,17 @@ export class ScheduleGrid extends LitElement {
     @state() private _activePaletteIndex = 1;
     @state() private _nowMinutes = ScheduleGrid._currentMinutes();
     @state() private _timeIndicatorLeft: number | null = null;
+    @state() private _mobileTimePos: { left: number; top: number; height: number } | null = null;
+    @state() private _isMobile = false;
+    @state() private _mobileSelectedDayKey = "";
+    @state() private _mobilePaintMode = false;
 
     private _daysPerPage = 56;
+    private _tapTarget: { row: number; col: number; dayKey: string } | null = null;
+    private _tapStartX = 0;
+    private _tapStartY = 0;
     private _timerHandle: ReturnType<typeof setInterval> | null = null;
+    private _mediaQuery: MediaQueryList | null = null;
 
     private static _currentMinutes(): number {
         const now = new Date();
@@ -38,6 +47,9 @@ export class ScheduleGrid extends LitElement {
         this._timerHandle = setInterval(() => {
             this._nowMinutes = ScheduleGrid._currentMinutes();
         }, 30_000);
+        this._mediaQuery = window.matchMedia("(max-width: 768px)");
+        this._isMobile = this._mediaQuery.matches;
+        this._mediaQuery.addEventListener("change", this._onMediaChange);
     }
 
     disconnectedCallback() {
@@ -46,16 +58,26 @@ export class ScheduleGrid extends LitElement {
             clearInterval(this._timerHandle);
             this._timerHandle = null;
         }
+        this._mediaQuery?.removeEventListener("change", this._onMediaChange);
     }
+
+    private _onMediaChange = (e: MediaQueryListEvent) => {
+        this._isMobile = e.matches;
+    };
 
     protected updated(changed: Map<string, unknown>) {
         super.updated(changed);
-        if (changed.has("_nowMinutes") || changed.has("slots") || changed.has("cadence")) {
+        if (changed.has("_nowMinutes") || changed.has("slots") || changed.has("cadence")
+            || changed.has("_isMobile") || changed.has("_mobileSelectedDayKey")) {
             requestAnimationFrame(() => this._updateTimeIndicatorPosition());
         }
     }
 
     private _updateTimeIndicatorPosition() {
+        if (this._isMobile) {
+            this._updateMobileTimeIndicator();
+            return;
+        }
         const grid = this.shadowRoot?.querySelector(".grid") as HTMLElement | null;
         const wrapper = this.shadowRoot?.querySelector(".grid-wrapper") as HTMLElement | null;
         if (!grid || !wrapper) return;
@@ -67,6 +89,32 @@ export class ScheduleGrid extends LitElement {
         const wrapperRect = wrapper.getBoundingClientRect();
         const cellRect = cell.getBoundingClientRect();
         this._timeIndicatorLeft = cellRect.left - wrapperRect.left + cellRect.width * fraction;
+    }
+
+    private _updateMobileTimeIndicator() {
+        const grid = this.shadowRoot?.querySelector(".mobile-grid") as HTMLElement | null;
+        const wrapper = this.shadowRoot?.querySelector(".grid-wrapper") as HTMLElement | null;
+        if (!grid || !wrapper) { this._mobileTimePos = null; return; }
+
+        const selectedDay = this._effectiveMobileDay;
+        const isToday = this.cadence === "daily" || this._rowTemporalState(selectedDay) === "today";
+        if (!isToday) { this._mobileTimePos = null; return; }
+
+        const slotIndex = Math.floor(this._nowMinutes / 15);
+        const fraction = (this._nowMinutes % 15) / 15;
+        const quadrant = Math.floor(slotIndex / MOBILE_SLOTS_PER_ROW);
+        const colInQuadrant = slotIndex % MOBILE_SLOTS_PER_ROW;
+
+        const cell = grid.querySelector(`[data-row="${quadrant}"][data-col="${colInQuadrant}"]`) as HTMLElement | null;
+        if (!cell) { this._mobileTimePos = null; return; }
+
+        const wrapperRect = wrapper.getBoundingClientRect();
+        const cellRect = cell.getBoundingClientRect();
+        this._mobileTimePos = {
+            left: cellRect.left - wrapperRect.left + cellRect.width * fraction,
+            top: cellRect.top - wrapperRect.top,
+            height: cellRect.height,
+        };
     }
 
     static styles = [
@@ -269,8 +317,58 @@ export class ScheduleGrid extends LitElement {
         bottom: 0;
         transform: translate(-50%, calc(100% + 4px));
       }
+      /* ── Mobile layout ── */
+      .day-select {
+        flex: 1;
+        min-width: 120px;
+      }
+      .mobile-grid {
+        display: grid;
+        grid-template-columns: 64px repeat(${MOBILE_SLOTS_PER_ROW}, 1fr);
+        gap: 1px;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      .mobile-grid .cell {
+        aspect-ratio: 1;
+        min-width: 0;
+        min-height: 0;
+      }
+      .mobile-grid .header-cell {
+        font-size: 9px;
+        height: 16px;
+        line-height: 16px;
+      }
+      .mobile-grid .row-label {
+        font-size: 11px;
+        padding-right: 4px;
+        position: static;
+        display: flex;
+        align-items: center;
+      }
+      .mobile-grid .header-spacer {
+        position: static;
+      }
+      .paint-toggle {
+        transition: background 0.15s;
+      }
+      .paint-toggle.paint-active {
+        background: var(--ss-primary);
+        color: #fff;
+      }
+      .mobile-grid.paint-active {
+        outline: 2px solid var(--ss-primary);
+        outline-offset: 2px;
+        border-radius: 4px;
+      }
     `,
     ];
+
+    private get _allDayKeys(): string[] {
+        if (this.cadence === "daily") return ["0"];
+        if (this.cadence === "weekly") return DAY_KEYS_WEEKLY;
+        return this.customDates;
+    }
 
     private get _dayKeys(): string[] {
         if (this.cadence === "daily") return ["0"];
@@ -280,6 +378,14 @@ export class ScheduleGrid extends LitElement {
         if (allDates.length <= this._daysPerPage) return allDates;
         const start = this._page * this._daysPerPage;
         return allDates.slice(start, start + this._daysPerPage);
+    }
+
+    private get _effectiveMobileDay(): string {
+        const keys = this._allDayKeys;
+        if (this._mobileSelectedDayKey && keys.includes(this._mobileSelectedDayKey)) {
+            return this._mobileSelectedDayKey;
+        }
+        return keys[0] || "0";
     }
 
     private get _totalPages(): number {
@@ -302,7 +408,17 @@ export class ScheduleGrid extends LitElement {
         return `${dow} ${key}`;
     }
 
+    private _mobileDayLabel(key: string): string {
+        const label = this._dayLabel(key);
+        return this._rowTemporalState(key) === "today" ? `${label} (Today)` : label;
+    }
+
     render() {
+        if (this._isMobile) return this._renderMobileLayout();
+        return this._renderDesktopLayout();
+    }
+
+    private _renderDesktopLayout() {
         const dayKeys = this._dayKeys;
         const hours = Array.from({ length: 24 }, (_, i) => i);
         const isColor = this.slotType === "color";
@@ -360,6 +476,120 @@ export class ScheduleGrid extends LitElement {
           `
                 : nothing}
     `;
+    }
+
+    private _renderMobileLayout() {
+        const isColor = this.slotType === "color";
+        const dayKeys = this._allDayKeys;
+        const selectedDay = this._effectiveMobileDay;
+        const daySlots = this.slots[selectedDay] ?? new Array(SLOTS_PER_DAY).fill(0);
+        const showDaySelect = this.cadence !== "daily";
+        const isToday = this.cadence === "daily" || this._rowTemporalState(selectedDay) === "today";
+        const quadrants = [
+            { label: "00 – 03", startHour: 0 },
+            { label: "04 – 07", startHour: 4 },
+            { label: "08 – 11", startHour: 8 },
+            { label: "12 – 15", startHour: 12 },
+            { label: "16 – 19", startHour: 16 },
+            { label: "20 – 23", startHour: 20 },
+        ];
+
+        return html`
+      ${isColor ? this._renderPaletteBar() : nothing}
+      <div class="toolbar">
+        ${isColor
+                ? html`
+              <button class="secondary" @click=${() => this._bulkSet(this._activePaletteIndex)}>Fill All</button>
+              <button class="secondary" @click=${() => this._bulkSet(0)}>Clear All</button>
+            `
+                : html`
+              <button class="secondary" @click=${() => this._bulkSet(1)}>All On</button>
+              <button class="secondary" @click=${() => this._bulkSet(0)}>All Off</button>
+            `}
+        ${this.cadence === "weekly"
+                ? html`<button class="secondary" @click=${this._copyMondayToAll}>Copy Mon → All</button>`
+                : nothing}
+        <button class="secondary paint-toggle ${this._mobilePaintMode ? "paint-active" : ""}"
+                @click=${this._togglePaintMode}>
+            ${this._mobilePaintMode ? "Paint: ON" : "Paint: OFF"}
+        </button>
+        ${showDaySelect
+                ? html`
+              <select class="day-select" .value=${selectedDay} @change=${this._onMobileDayChange}>
+                ${dayKeys.map((k) => html`
+                  <option value=${k} ?selected=${k === selectedDay}>${this._mobileDayLabel(k)}</option>
+                `)}
+              </select>
+            `
+                : nothing}
+      </div>
+      <div class="grid-container">
+        <div class="grid-wrapper">
+          ${this._renderMobileTimeIndicator()}
+          <div class="mobile-grid ${this._mobilePaintMode ? "paint-active" : ""}" @mouseup=${this._onMouseUp} @mouseleave=${this._onMouseUp}>
+            ${quadrants.map((q, qIdx) => {
+                    const startSlot = qIdx * MOBILE_SLOTS_PER_ROW;
+                    const hours = Array.from({ length: 4 }, (_, i) => q.startHour + i);
+                    return html`
+                <div class="header-spacer"></div>
+                ${hours.map((h) => html`
+                  <div class="header-cell" style="grid-column: span 4">${String(h).padStart(2, "0")}</div>
+                `)}
+                <div class="row-label ${isToday ? "today-row" : ""}">${q.label}</div>
+                ${Array.from({ length: MOBILE_SLOTS_PER_ROW }, (_, colIdx) => {
+                        const slotIdx = startSlot + colIdx;
+                        const val = daySlots[slotIdx];
+                        const inDrag = this._isInDragRegion(qIdx, colIdx);
+                        const cellStyle = isColor ? this._colorCellStyle(val) : "";
+                        return html`
+                    <div
+                      class="cell ${isColor ? (val ? "color-set" : "off") : (val ? "on" : "off")} ${isToday ? "today-row" : ""} ${inDrag ? "drag-preview" : ""} ${colIdx % 4 === 0 ? "hour-start" : ""}"
+                      style=${cellStyle}
+                      data-row=${qIdx}
+                      data-col=${colIdx}
+                      data-day=${selectedDay}
+                      title="${this._cellTooltip(slotIdx)}"
+                      @mousedown=${(e: MouseEvent) => this._onMouseDown(e, qIdx, colIdx, selectedDay)}
+                      @mouseenter=${(e: MouseEvent) => this._onMouseEnter(e, qIdx, colIdx)}
+                      @touchstart=${(e: TouchEvent) => this._onTouchStart(e, qIdx, colIdx, selectedDay)}
+                      @touchmove=${this._onTouchMove}
+                      @touchend=${this._onTouchEnd}
+                    ></div>
+                  `;
+                    })}
+              `;
+                })}
+          </div>
+        </div>
+      </div>
+    `;
+    }
+
+    private _onMobileDayChange(e: Event) {
+        this._mobileSelectedDayKey = (e.target as HTMLSelectElement).value;
+    }
+
+    private _togglePaintMode() {
+        this._mobilePaintMode = !this._mobilePaintMode;
+    }
+
+    private _toggleSingleCell(row: number, col: number, dayKey: string) {
+        const slotIdx = row * MOBILE_SLOTS_PER_ROW + col;
+        if (slotIdx >= SLOTS_PER_DAY) return;
+        const daySlots = [...(this.slots[dayKey] ?? new Array(SLOTS_PER_DAY).fill(0))];
+        if (this.slotType === "color") {
+            daySlots[slotIdx] = daySlots[slotIdx] === this._activePaletteIndex ? 0 : this._activePaletteIndex;
+        } else {
+            daySlots[slotIdx] = daySlots[slotIdx] ? 0 : 1;
+        }
+        const newSlots = { ...this.slots, [dayKey]: daySlots };
+        this.dispatchEvent(
+            new CustomEvent("slots-changed", {
+                detail: { slots: newSlots },
+                bubbles: true,
+                composed: true,
+            })
+        );
     }
 
     private _weekIndex(dayKey: string): number {
@@ -469,6 +699,18 @@ export class ScheduleGrid extends LitElement {
     `;
     }
 
+    private _renderMobileTimeIndicator() {
+        if (!this._mobileTimePos) return nothing;
+        const h = Math.floor(this._nowMinutes / 60);
+        const m = this._nowMinutes % 60;
+        const timeStr = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+        const { left, top, height } = this._mobileTimePos;
+        return html`
+      <span class="time-label" style="left: ${left}px; top: ${top}px; transform: translate(-50%, -100%)">${timeStr}</span>
+      <div class="time-indicator" style="left: ${left}px; top: ${top}px; height: ${height}px; bottom: auto"></div>
+    `;
+    }
+
     private _isInDragRegion(row: number, col: number): boolean {
         if (!this._dragActive) return false;
         const r0 = Math.min(this._dragStartRow, this._dragEndRow);
@@ -481,10 +723,11 @@ export class ScheduleGrid extends LitElement {
     private _onMouseDown(e: MouseEvent, row: number, col: number, dayKey: string) {
         e.preventDefault();
         const daySlots = this.slots[dayKey] ?? new Array(SLOTS_PER_DAY).fill(0);
+        const slotIdx = this._isMobile ? row * MOBILE_SLOTS_PER_ROW + col : col;
         if (this.slotType === "color") {
-            this._dragValue = daySlots[col] === this._activePaletteIndex ? 0 : this._activePaletteIndex;
+            this._dragValue = daySlots[slotIdx] === this._activePaletteIndex ? 0 : this._activePaletteIndex;
         } else {
-            this._dragValue = daySlots[col] ? 0 : 1;
+            this._dragValue = daySlots[slotIdx] ? 0 : 1;
         }
         this._dragStartRow = row;
         this._dragStartCol = col;
@@ -506,12 +749,20 @@ export class ScheduleGrid extends LitElement {
     }
 
     private _onTouchStart(e: TouchEvent, row: number, col: number, dayKey: string) {
+        if (this._isMobile && !this._mobilePaintMode) {
+            const touch = e.touches[0];
+            this._tapTarget = { row, col, dayKey };
+            this._tapStartX = touch.clientX;
+            this._tapStartY = touch.clientY;
+            return;
+        }
         e.preventDefault();
         const daySlots = this.slots[dayKey] ?? new Array(SLOTS_PER_DAY).fill(0);
+        const slotIdx = this._isMobile ? row * MOBILE_SLOTS_PER_ROW + col : col;
         if (this.slotType === "color") {
-            this._dragValue = daySlots[col] === this._activePaletteIndex ? 0 : this._activePaletteIndex;
+            this._dragValue = daySlots[slotIdx] === this._activePaletteIndex ? 0 : this._activePaletteIndex;
         } else {
-            this._dragValue = daySlots[col] ? 0 : 1;
+            this._dragValue = daySlots[slotIdx] ? 0 : 1;
         }
         this._dragStartRow = row;
         this._dragStartCol = col;
@@ -521,6 +772,15 @@ export class ScheduleGrid extends LitElement {
     }
 
     private _onTouchMove(e: TouchEvent) {
+        if (this._isMobile && !this._mobilePaintMode) {
+            if (this._tapTarget) {
+                const touch = e.touches[0];
+                const dx = Math.abs(touch.clientX - this._tapStartX);
+                const dy = Math.abs(touch.clientY - this._tapStartY);
+                if (dx > 10 || dy > 10) this._tapTarget = null;
+            }
+            return;
+        }
         if (!this._dragActive) return;
         const touch = e.touches[0];
         const el = this.shadowRoot?.elementFromPoint(touch.clientX, touch.clientY) as HTMLElement | null;
@@ -531,27 +791,49 @@ export class ScheduleGrid extends LitElement {
     }
 
     private _onTouchEnd() {
+        if (this._isMobile && !this._mobilePaintMode) {
+            if (this._tapTarget) {
+                this._toggleSingleCell(this._tapTarget.row, this._tapTarget.col, this._tapTarget.dayKey);
+                this._tapTarget = null;
+            }
+            return;
+        }
         if (!this._dragActive) return;
         this._applyDrag();
         this._dragActive = false;
     }
 
     private _applyDrag() {
-        const dayKeys = this._dayKeys;
         const r0 = Math.min(this._dragStartRow, this._dragEndRow);
         const r1 = Math.max(this._dragStartRow, this._dragEndRow);
         const c0 = Math.min(this._dragStartCol, this._dragEndCol);
         const c1 = Math.max(this._dragStartCol, this._dragEndCol);
 
         const newSlots = { ...this.slots };
-        for (let r = r0; r <= r1; r++) {
-            const dayKey = dayKeys[r];
-            if (!dayKey) continue;
+
+        if (this._isMobile) {
+            const dayKey = this._effectiveMobileDay;
             const daySlots = [...(newSlots[dayKey] ?? new Array(SLOTS_PER_DAY).fill(0))];
-            for (let c = c0; c <= c1; c++) {
-                daySlots[c] = this._dragValue;
+            for (let r = r0; r <= r1; r++) {
+                for (let c = c0; c <= c1; c++) {
+                    const actualSlot = r * MOBILE_SLOTS_PER_ROW + c;
+                    if (actualSlot < SLOTS_PER_DAY) {
+                        daySlots[actualSlot] = this._dragValue;
+                    }
+                }
             }
             newSlots[dayKey] = daySlots;
+        } else {
+            const dayKeys = this._dayKeys;
+            for (let r = r0; r <= r1; r++) {
+                const dayKey = dayKeys[r];
+                if (!dayKey) continue;
+                const daySlots = [...(newSlots[dayKey] ?? new Array(SLOTS_PER_DAY).fill(0))];
+                for (let c = c0; c <= c1; c++) {
+                    daySlots[c] = this._dragValue;
+                }
+                newSlots[dayKey] = daySlots;
+            }
         }
 
         this.dispatchEvent(
