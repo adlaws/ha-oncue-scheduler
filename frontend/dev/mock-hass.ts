@@ -46,7 +46,7 @@ const store = new Map<string, MockSchedule>();
 store.set("sched_001", {
     id: "sched_001",
     name: "Morning Lights",
-    entity_ids: ["switch.living_room", "light.hallway"],
+    entity_ids: ["switch.living_room", "light.hallway", "switch.kitchen_kettle"],
     cadence: "daily",
     repeat: true,
     start_date: null,
@@ -165,9 +165,14 @@ async function handleMessage(msg: Record<string, unknown>): Promise<any> {
         case "oncue_scheduler/get_overrides": {
             const sid = msg.schedule_id as string;
             const ov = overrides.get(sid);
+            const s = store.get(sid);
+            const unavailable = s
+                ? s.entity_ids.filter((eid) => mockHass.states[eid]?.state === "unavailable")
+                : [];
             return {
                 overrides: ov ? Object.fromEntries(ov) : {},
                 scheduled_states: getScheduledStates(sid),
+                unavailable_entities: unavailable,
             };
         }
 
@@ -187,7 +192,7 @@ const mockHass = {
         "switch.office_heater": { entity_id: "switch.office_heater", state: "on", attributes: { friendly_name: "Office Heater" } },
         "switch.desk_lamp": { entity_id: "switch.desk_lamp", state: "on", attributes: { friendly_name: "Desk Lamp" } },
         "switch.garden_valve": { entity_id: "switch.garden_valve", state: "off", attributes: { friendly_name: "Garden Valve" } },
-        "switch.kitchen_kettle": { entity_id: "switch.kitchen_kettle", state: "off", attributes: { friendly_name: "Kitchen Kettle" } },
+        "switch.kitchen_kettle": { entity_id: "switch.kitchen_kettle", state: "unavailable", attributes: { friendly_name: "Kitchen Kettle" } },
         "switch.garage_door": { entity_id: "switch.garage_door", state: "off", attributes: { friendly_name: "Garage Door" } },
         "light.hallway": { entity_id: "light.hallway", state: "off", attributes: { friendly_name: "Hallway Light" } },
         "light.bedroom": { entity_id: "light.bedroom", state: "off", attributes: { friendly_name: "Bedroom Light" } },

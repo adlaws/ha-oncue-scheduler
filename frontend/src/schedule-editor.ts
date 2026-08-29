@@ -53,6 +53,7 @@ export class ScheduleEditor extends LitElement {
     @state() private _active = true;
     @state() private _overrides: Record<string, string> = {};
     @state() private _scheduledStates: Record<string, string> = {};
+    @state() private _unavailableEntities: string[] = [];
     @state() private _revertDelay: number | null = 180;
     @state() private _slotType: string = "on_off";
     @state() private _palette: string[] = ["#ff0000", "#00ff00", "#0000ff", "#ffff00", "#ff00ff", "#00ffff", "#ff8800", "#ffffff"];
@@ -555,6 +556,7 @@ export class ScheduleEditor extends LitElement {
             .selectedIds=${this._entityIds}
             .overrides=${this._overrides}
             .scheduledStates=${this._scheduledStates}
+            .unavailableEntities=${this._unavailableEntities}
             .showOverrides=${!this.isNew}
             .slotType=${this._slotType}
             @entities-changed=${(e: CustomEvent) => {
@@ -734,6 +736,7 @@ export class ScheduleEditor extends LitElement {
         if (!this.schedule?.id) {
             this._overrides = {};
             this._scheduledStates = {};
+            this._unavailableEntities = [];
             return;
         }
         try {
@@ -743,9 +746,11 @@ export class ScheduleEditor extends LitElement {
             });
             this._overrides = result.overrides ?? {};
             this._scheduledStates = result.scheduled_states ?? {};
+            this._unavailableEntities = result.unavailable_entities ?? [];
         } catch {
             this._overrides = {};
             this._scheduledStates = {};
+            this._unavailableEntities = [];
         }
     }
 

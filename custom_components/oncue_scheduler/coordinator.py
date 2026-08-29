@@ -80,6 +80,8 @@ class ScheduleCoordinator:
         self._revert_timers: dict[str, CALLBACK_TYPE] = {}
         # Guard: entities currently being set by the coordinator itself
         self._applying: set[str] = set()
+        # Entities that are currently unavailable/unknown
+        self._unavailable: set[str] = set()
 
     async def async_start(self) -> None:
         self._unsub_time = async_track_utc_time_change(
@@ -169,16 +171,20 @@ class ScheduleCoordinator:
     async def _async_apply_state(self, entity_id: str, desired: int, slot_type: str, schedule: dict[str, Any] | None = None) -> None:
         state = self._hass.states.get(entity_id)
         if state is None:
+            self._unavailable.add(entity_id)
             _LOGGER.warning(
                 "Entity '%s' not found, skipping", entity_id
             )
             return
 
         if state.state in ("unavailable", "unknown"):
+            self._unavailable.add(entity_id)
             _LOGGER.warning(
                 "Entity '%s' is %s, skipping", entity_id, state.state
             )
             return
+
+        self._unavailable.discard(entity_id)
 
         palette = schedule.get("palette") if schedule else None
         result = interpret_slot_value(desired, slot_type, palette)
@@ -244,6 +250,16 @@ class ScheduleCoordinator:
         """Return current overrides for a schedule: {entity_id: "on"|"off"}."""
         return dict(self._overrides.get(schedule_id, {}))
 
+    def get_unavailable_entities(self, schedule_id: str) -> list[str]:
+        """Return entities in a schedule that are currently unavailable."""
+        schedule = self._store.schedules.get(schedule_id)
+        if not schedule:
+            return []
+        return sorted(
+            eid for eid in schedule.get("entity_ids", [])
+            if eid in self._unavailable
+        )
+
     def get_scheduled_states(self, schedule_id: str) -> dict[str, str]:
         """Return what each entity's scheduled state is right now."""
         schedule = self._store.schedules.get(schedule_id)
@@ -307,6 +323,17 @@ class ScheduleCoordinator:
         if new_state.state == old_state.state:
             return
 
+        # Entity just became available — apply scheduled state immediately
+        if old_state.state in ("unavailable", "unknown") and new_state.state not in ("unavailable", "unknown"):
+            self._unavailable.discard(entity_id)
+            self._hass.async_create_task(self._async_apply_on_available(entity_id))
+            return
+
+        # Entity just became unavailable
+        if new_state.state in ("unavailable", "unknown"):
+            self._unavailable.add(entity_id)
+            return
+
         # Find schedules that manage this entity and have revert enabled
         for schedule in self._store.schedules.values():
             if not schedule.get("active"):
@@ -334,6 +361,38 @@ class ScheduleCoordinator:
                 entity_id, new_state.state, desired, revert_delay,
             )
             self._schedule_revert(entity_id, desired, revert_delay)
+
+    async def _async_apply_on_available(self, entity_id: str) -> None:
+        """Apply scheduled state to an entity that just became available."""
+        local_now = dt_util.now()
+        local_date = local_now.date()
+
+        for schedule in self._store.schedules.values():
+            if not schedule.get("active"):
+                continue
+            if entity_id not in schedule.get("entity_ids", []):
+                continue
+
+            slot_minutes = schedule.get("slot_minutes", 15)
+            slot_index = compute_slot_index(local_now, slot_minutes)
+            day_key = compute_day_key(schedule, local_date)
+            if day_key is None:
+                continue
+
+            day_slots = schedule.get("slots", {}).get(day_key)
+            if not day_slots or slot_index >= len(day_slots):
+                continue
+
+            desired_state = day_slots[slot_index]
+            slot_type = schedule.get("slot_type", SLOT_TYPE_ON_OFF)
+
+            override = self._overrides.get(schedule["id"], {}).get(entity_id)
+            if override is not None:
+                override_desired = 1 if override == "on" else 0
+                await self._async_apply_state(entity_id, override_desired, slot_type, schedule)
+            else:
+                await self._async_apply_state(entity_id, desired_state, slot_type, schedule)
+            return
 
     def _get_desired_state(
         self, schedule: dict[str, Any], entity_id: str

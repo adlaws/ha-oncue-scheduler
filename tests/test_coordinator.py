@@ -622,3 +622,298 @@ async def test_get_scheduled_states_inactive(hass):
 
     coordinator = ScheduleCoordinator(hass, store)
     assert coordinator.get_scheduled_states(saved["id"]) == {}
+
+
+@pytest.mark.asyncio
+async def test_apply_on_available_turns_on_entity(hass):
+    """Entity becoming available is immediately set to the scheduled state."""
+    from oncue_scheduler.store import ScheduleStore
+    from oncue_scheduler.coordinator import ScheduleCoordinator
+
+    store = ScheduleStore(hass)
+    await store.async_load()
+
+    slots = [0] * 96
+    slots[0] = 1  # On at midnight
+    await store.async_save_schedule({
+        "name": "Test",
+        "entity_ids": ["switch.test"],
+        "cadence": "daily",
+        "slots": {"0": slots},
+    })
+
+    mock_state = MagicMock()
+    mock_state.state = "off"
+    hass.states.get = MagicMock(return_value=mock_state)
+
+    coordinator = ScheduleCoordinator(hass, store)
+
+    with patch("oncue_scheduler.coordinator.dt_util") as mock_dt:
+        mock_dt.now.return_value = datetime(2025, 1, 6, 0, 0, tzinfo=timezone.utc)
+        await coordinator._async_apply_on_available("switch.test")
+
+    hass.services.async_call.assert_called_once_with(
+        "homeassistant", "turn_on", {"entity_id": "switch.test"}, blocking=True
+    )
+
+
+@pytest.mark.asyncio
+async def test_apply_on_available_respects_override(hass):
+    """Override takes priority when an entity becomes available."""
+    from oncue_scheduler.store import ScheduleStore
+    from oncue_scheduler.coordinator import ScheduleCoordinator
+
+    store = ScheduleStore(hass)
+    await store.async_load()
+
+    slots = [1] * 96  # All on
+    saved = await store.async_save_schedule({
+        "name": "Test",
+        "entity_ids": ["switch.test"],
+        "cadence": "daily",
+        "slots": {"0": slots},
+    })
+
+    mock_state = MagicMock()
+    mock_state.state = "on"
+    hass.states.get = MagicMock(return_value=mock_state)
+
+    coordinator = ScheduleCoordinator(hass, store)
+    coordinator.set_override(saved["id"], "switch.test", "off")
+
+    with patch("oncue_scheduler.coordinator.dt_util") as mock_dt:
+        mock_dt.now.return_value = datetime(2025, 1, 6, 0, 0, tzinfo=timezone.utc)
+        await coordinator._async_apply_on_available("switch.test")
+
+    hass.services.async_call.assert_called_once_with(
+        "homeassistant", "turn_off", {"entity_id": "switch.test"}, blocking=True
+    )
+
+
+@pytest.mark.asyncio
+async def test_apply_on_available_skips_inactive_schedule(hass):
+    """Entity becoming available is ignored if its schedule is inactive."""
+    from oncue_scheduler.store import ScheduleStore
+    from oncue_scheduler.coordinator import ScheduleCoordinator
+
+    store = ScheduleStore(hass)
+    await store.async_load()
+
+    slots = [1] * 96
+    saved = await store.async_save_schedule({
+        "name": "Test",
+        "entity_ids": ["switch.test"],
+        "cadence": "daily",
+        "slots": {"0": slots},
+    })
+    await store.async_set_active(saved["id"], False)
+
+    mock_state = MagicMock()
+    mock_state.state = "off"
+    hass.states.get = MagicMock(return_value=mock_state)
+
+    coordinator = ScheduleCoordinator(hass, store)
+
+    with patch("oncue_scheduler.coordinator.dt_util") as mock_dt:
+        mock_dt.now.return_value = datetime(2025, 1, 6, 0, 0, tzinfo=timezone.utc)
+        await coordinator._async_apply_on_available("switch.test")
+
+    hass.services.async_call.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_on_state_changed_triggers_apply_on_available(hass):
+    """State change from unavailable to on triggers _async_apply_on_available."""
+    from oncue_scheduler.store import ScheduleStore
+    from oncue_scheduler.coordinator import ScheduleCoordinator
+
+    store = ScheduleStore(hass)
+    await store.async_load()
+
+    slots = [1] * 96
+    await store.async_save_schedule({
+        "name": "Test",
+        "entity_ids": ["switch.test"],
+        "cadence": "daily",
+        "slots": {"0": slots},
+    })
+
+    coordinator = ScheduleCoordinator(hass, store)
+
+    old_state = MagicMock()
+    old_state.state = "unavailable"
+    new_state = MagicMock()
+    new_state.state = "on"
+
+    event = MagicMock()
+    event.data = {
+        "entity_id": "switch.test",
+        "old_state": old_state,
+        "new_state": new_state,
+    }
+
+    coordinator._on_state_changed(event)
+
+    hass.async_create_task.assert_called_once()
+    coro = hass.async_create_task.call_args[0][0]
+    assert "_async_apply_on_available" in coro.__qualname__
+    coro.close()
+
+
+@pytest.mark.asyncio
+async def test_unavailable_entity_tracked(hass):
+    """Entity that is unavailable during evaluate is added to _unavailable."""
+    from oncue_scheduler.store import ScheduleStore
+    from oncue_scheduler.coordinator import ScheduleCoordinator
+
+    store = ScheduleStore(hass)
+    await store.async_load()
+
+    slots = [1] * 96
+    saved = await store.async_save_schedule({
+        "name": "Test",
+        "entity_ids": ["switch.test"],
+        "cadence": "daily",
+        "slots": {"0": slots},
+    })
+
+    mock_state = MagicMock()
+    mock_state.state = "unavailable"
+    hass.states.get = MagicMock(return_value=mock_state)
+
+    coordinator = ScheduleCoordinator(hass, store)
+
+    with patch("oncue_scheduler.coordinator.dt_util") as mock_dt:
+        mock_dt.now.return_value = datetime(2025, 1, 6, 0, 0, tzinfo=timezone.utc)
+        await coordinator._async_evaluate()
+
+    assert coordinator.get_unavailable_entities(saved["id"]) == ["switch.test"]
+
+
+@pytest.mark.asyncio
+async def test_available_entity_not_tracked(hass):
+    """Entity that is available is not in the unavailable set."""
+    from oncue_scheduler.store import ScheduleStore
+    from oncue_scheduler.coordinator import ScheduleCoordinator
+
+    store = ScheduleStore(hass)
+    await store.async_load()
+
+    slots = [1] * 96
+    saved = await store.async_save_schedule({
+        "name": "Test",
+        "entity_ids": ["switch.test"],
+        "cadence": "daily",
+        "slots": {"0": slots},
+    })
+
+    mock_state = MagicMock()
+    mock_state.state = "off"
+    hass.states.get = MagicMock(return_value=mock_state)
+
+    coordinator = ScheduleCoordinator(hass, store)
+
+    with patch("oncue_scheduler.coordinator.dt_util") as mock_dt:
+        mock_dt.now.return_value = datetime(2025, 1, 6, 0, 0, tzinfo=timezone.utc)
+        await coordinator._async_evaluate()
+
+    assert coordinator.get_unavailable_entities(saved["id"]) == []
+
+
+@pytest.mark.asyncio
+async def test_unavailable_cleared_when_entity_becomes_available(hass):
+    """Entity removed from _unavailable when it transitions to available."""
+    from oncue_scheduler.store import ScheduleStore
+    from oncue_scheduler.coordinator import ScheduleCoordinator
+
+    store = ScheduleStore(hass)
+    await store.async_load()
+
+    slots = [1] * 96
+    saved = await store.async_save_schedule({
+        "name": "Test",
+        "entity_ids": ["switch.test"],
+        "cadence": "daily",
+        "slots": {"0": slots},
+    })
+
+    # First evaluate with entity unavailable
+    mock_state = MagicMock()
+    mock_state.state = "unavailable"
+    hass.states.get = MagicMock(return_value=mock_state)
+
+    coordinator = ScheduleCoordinator(hass, store)
+
+    with patch("oncue_scheduler.coordinator.dt_util") as mock_dt:
+        mock_dt.now.return_value = datetime(2025, 1, 6, 0, 0, tzinfo=timezone.utc)
+        await coordinator._async_evaluate()
+
+    assert coordinator.get_unavailable_entities(saved["id"]) == ["switch.test"]
+
+    # Now entity becomes available — simulate state change event
+    old_state = MagicMock()
+    old_state.state = "unavailable"
+    new_state = MagicMock()
+    new_state.state = "on"
+
+    event = MagicMock()
+    event.data = {
+        "entity_id": "switch.test",
+        "old_state": old_state,
+        "new_state": new_state,
+    }
+
+    coordinator._on_state_changed(event)
+
+    assert coordinator.get_unavailable_entities(saved["id"]) == []
+    # Clean up the unawaited coroutine from async_create_task
+    hass.async_create_task.call_args[0][0].close()
+
+
+@pytest.mark.asyncio
+async def test_state_change_to_unavailable_tracked(hass):
+    """Entity transitioning to unavailable is added to tracking."""
+    from oncue_scheduler.store import ScheduleStore
+    from oncue_scheduler.coordinator import ScheduleCoordinator
+
+    store = ScheduleStore(hass)
+    await store.async_load()
+
+    slots = [1] * 96
+    saved = await store.async_save_schedule({
+        "name": "Test",
+        "entity_ids": ["switch.test"],
+        "cadence": "daily",
+        "slots": {"0": slots},
+    })
+
+    coordinator = ScheduleCoordinator(hass, store)
+
+    old_state = MagicMock()
+    old_state.state = "on"
+    new_state = MagicMock()
+    new_state.state = "unavailable"
+
+    event = MagicMock()
+    event.data = {
+        "entity_id": "switch.test",
+        "old_state": old_state,
+        "new_state": new_state,
+    }
+
+    coordinator._on_state_changed(event)
+
+    assert coordinator.get_unavailable_entities(saved["id"]) == ["switch.test"]
+
+
+@pytest.mark.asyncio
+async def test_get_unavailable_entities_unknown_schedule(hass):
+    """get_unavailable_entities returns empty list for unknown schedule ID."""
+    from oncue_scheduler.store import ScheduleStore
+    from oncue_scheduler.coordinator import ScheduleCoordinator
+
+    store = ScheduleStore(hass)
+    await store.async_load()
+
+    coordinator = ScheduleCoordinator(hass, store)
+    assert coordinator.get_unavailable_entities("nonexistent") == []

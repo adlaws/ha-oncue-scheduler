@@ -22,8 +22,52 @@ export class ScheduleGrid extends LitElement {
     @state() private _dragEndCol = -1;
     @state() private _page = 0;
     @state() private _activePaletteIndex = 1;
+    @state() private _nowMinutes = ScheduleGrid._currentMinutes();
+    @state() private _timeIndicatorLeft: number | null = null;
 
     private _daysPerPage = 56;
+    private _timerHandle: ReturnType<typeof setInterval> | null = null;
+
+    private static _currentMinutes(): number {
+        const now = new Date();
+        return now.getHours() * 60 + now.getMinutes();
+    }
+
+    connectedCallback() {
+        super.connectedCallback();
+        this._timerHandle = setInterval(() => {
+            this._nowMinutes = ScheduleGrid._currentMinutes();
+        }, 30_000);
+    }
+
+    disconnectedCallback() {
+        super.disconnectedCallback();
+        if (this._timerHandle !== null) {
+            clearInterval(this._timerHandle);
+            this._timerHandle = null;
+        }
+    }
+
+    protected updated(changed: Map<string, unknown>) {
+        super.updated(changed);
+        if (changed.has("_nowMinutes") || changed.has("slots") || changed.has("cadence")) {
+            requestAnimationFrame(() => this._updateTimeIndicatorPosition());
+        }
+    }
+
+    private _updateTimeIndicatorPosition() {
+        const grid = this.shadowRoot?.querySelector(".grid") as HTMLElement | null;
+        const wrapper = this.shadowRoot?.querySelector(".grid-wrapper") as HTMLElement | null;
+        if (!grid || !wrapper) return;
+        const slotIndex = Math.floor(this._nowMinutes / 15);
+        const fraction = (this._nowMinutes % 15) / 15;
+        // Find the cell at the current slot index (first row's cells)
+        const cell = grid.querySelector(`[data-col="${slotIndex}"]`) as HTMLElement | null;
+        if (!cell) return;
+        const wrapperRect = wrapper.getBoundingClientRect();
+        const cellRect = cell.getBoundingClientRect();
+        this._timeIndicatorLeft = cellRect.left - wrapperRect.left + cellRect.width * fraction;
+    }
 
     static styles = [
         sharedStyles,
@@ -35,7 +79,8 @@ export class ScheduleGrid extends LitElement {
       .grid-container {
         overflow-x: auto;
         -webkit-overflow-scrolling: touch;
-        padding-bottom: 0.5em;
+        padding-top: 18px;
+        padding-bottom: 18px;
         background: var(--_grid-bg);
       }
       .toolbar {
@@ -97,6 +142,13 @@ export class ScheduleGrid extends LitElement {
       .row-label.week-even {
         background: color-mix(in srgb, var(--ss-primary) 6%, var(--_grid-bg));
       }
+      .row-label.today-row {
+        background: color-mix(in srgb, var(--warning-color, #ff9800) 18%, var(--_grid-bg));
+        font-weight: 700;
+      }
+      .row-label.past-row {
+        opacity: 0.4;
+      }
       .cell {
         aspect-ratio: 1;
         min-width: var(--ss-cell-size);
@@ -115,6 +167,16 @@ export class ScheduleGrid extends LitElement {
       }
       .cell.off.week-even {
         background: color-mix(in srgb, var(--ss-primary) 6%, var(--ss-cell-off));
+      }
+      .cell.today-row.on {
+        box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warning-color, #ff9800) 40%, transparent);
+      }
+      .cell.today-row.off {
+        background: color-mix(in srgb, var(--warning-color, #ff9800) 12%, var(--ss-cell-off));
+        border-color: color-mix(in srgb, var(--warning-color, #ff9800) 30%, var(--divider-color, #e0e0e0));
+      }
+      .cell.past-row {
+        opacity: 0.4;
       }
       .cell.color-set {
         border: 1px solid rgba(0, 0, 0, 0.15);
@@ -177,6 +239,36 @@ export class ScheduleGrid extends LitElement {
       .palette-swatch.eraser.active {
         border-color: var(--primary-text-color, #212121);
       }
+      .grid-wrapper {
+        position: relative;
+      }
+      .time-indicator {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 0;
+        border-left: 2px dashed var(--error-color, #db4437);
+        z-index: 3;
+        pointer-events: none;
+      }
+      .time-label {
+        position: absolute;
+        font-size: 10px;
+        font-weight: 600;
+        color: var(--error-color, #db4437);
+        white-space: nowrap;
+        transform: translateX(-50%);
+        pointer-events: none;
+        z-index: 4;
+      }
+      .time-label.top {
+        top: 0;
+        transform: translate(-50%, -100%);
+      }
+      .time-label.bottom {
+        bottom: 0;
+        transform: translate(-50%, calc(100% + 4px));
+      }
     `,
     ];
 
@@ -234,7 +326,9 @@ export class ScheduleGrid extends LitElement {
                 : nothing}
       </div>
       <div class="grid-container">
-        <div class="grid" @mouseup=${this._onMouseUp} @mouseleave=${this._onMouseUp}>
+        <div class="grid-wrapper">
+          ${this._renderTimeIndicator()}
+          <div class="grid" @mouseup=${this._onMouseUp} @mouseleave=${this._onMouseUp}>
           <!-- hour headers -->
           <div class="header-spacer"></div>
           ${hours.map(
@@ -245,6 +339,7 @@ export class ScheduleGrid extends LitElement {
 
           <!-- rows -->
           ${dayKeys.map((dayKey, rowIdx) => this._renderRow(dayKey, rowIdx))}
+          </div>
         </div>
       </div>
       ${this.cadence === "custom" && this._totalPages > 1
@@ -280,18 +375,37 @@ export class ScheduleGrid extends LitElement {
         return Math.floor(daysSinceSunday / 7);
     }
 
+    private _rowTemporalState(dayKey: string): "today" | "past" | "other" {
+        const now = new Date();
+        if (this.cadence === "weekly") {
+            // Monday=0 in our keys, JS getDay(): Mon=1..Sun=0
+            const todayKey = String((now.getDay() + 6) % 7);
+            return dayKey === todayKey ? "today" : "other";
+        }
+        if (this.cadence === "custom") {
+            const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+            if (dayKey === todayStr) return "today";
+            if (dayKey < todayStr) return "past";
+            return "other";
+        }
+        return "other";
+    }
+
     private _renderRow(dayKey: string, rowIdx: number) {
         const daySlots = this.slots[dayKey] ?? new Array(SLOTS_PER_DAY).fill(0);
         const isColor = this.slotType === "color";
         const weekEven = this.cadence === "custom" && this._weekIndex(dayKey) % 2 === 1;
+        const rowState = this._rowTemporalState(dayKey);
+        const isToday = rowState === "today";
+        const isPast = rowState === "past";
         return html`
-      <div class="row-label ${weekEven ? "week-even" : ""}">${this._renderLabel(dayKey)}</div>
+      <div class="row-label ${weekEven ? "week-even" : ""} ${isToday ? "today-row" : ""} ${isPast ? "past-row" : ""}">${this._renderLabel(dayKey)}</div>
       ${daySlots.map((val, colIdx) => {
             const inDrag = this._isInDragRegion(rowIdx, colIdx);
             const cellStyle = isColor ? this._colorCellStyle(val) : "";
             return html`
           <div
-            class="cell ${isColor ? (val ? "color-set" : "off") : (val ? "on" : "off")} ${weekEven && !val ? "week-even" : ""} ${inDrag ? "drag-preview" : ""} ${colIdx % 4 === 0 ? "hour-start" : ""}"
+            class="cell ${isColor ? (val ? "color-set" : "off") : (val ? "on" : "off")} ${weekEven && !val ? "week-even" : ""} ${isToday ? "today-row" : ""} ${isPast ? "past-row" : ""} ${inDrag ? "drag-preview" : ""} ${colIdx % 4 === 0 ? "hour-start" : ""}"
             style=${cellStyle}
             data-row=${rowIdx}
             data-col=${colIdx}
@@ -339,6 +453,19 @@ export class ScheduleGrid extends LitElement {
           ></div>
         `)}
       </div>
+    `;
+    }
+
+    private _renderTimeIndicator() {
+        if (this._timeIndicatorLeft === null) return nothing;
+        const h = Math.floor(this._nowMinutes / 60);
+        const m = this._nowMinutes % 60;
+        const timeStr = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+        const pos = `${this._timeIndicatorLeft}px`;
+        return html`
+      <span class="time-label top" style="left: ${pos}">${timeStr}</span>
+      <div class="time-indicator" style="left: ${pos}"></div>
+      <span class="time-label bottom" style="left: ${pos}">${timeStr}</span>
     `;
     }
 

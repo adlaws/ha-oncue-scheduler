@@ -13,6 +13,7 @@ export class EntityPicker extends LitElement {
     @property({ type: Array }) selectedIds: string[] = [];
     @property({ type: Object }) overrides: Record<string, string> = {};
     @property({ type: Object }) scheduledStates: Record<string, string> = {};
+    @property({ type: Array }) unavailableEntities: string[] = [];
     @property({ type: Boolean }) showOverrides = false;
 
     @state() private _query = "";
@@ -47,6 +48,22 @@ export class EntityPicker extends LitElement {
       .entity-row.override-conflict {
         background: color-mix(in srgb, var(--error-color, #db4437) 15%, transparent);
         border-color: var(--error-color, #db4437);
+      }
+      .entity-row.unavailable {
+        background: color-mix(in srgb, var(--error-color, #db4437) 10%, transparent);
+        border-color: var(--error-color, #db4437);
+        opacity: 0.8;
+      }
+      .unavailable-badge {
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        color: var(--error-color, #db4437);
+        background: color-mix(in srgb, var(--error-color, #db4437) 15%, transparent);
+        padding: 1px 6px;
+        border-radius: 4px;
+        white-space: nowrap;
+        flex-shrink: 0;
       }
       .entity-name {
         flex: 1;
@@ -219,8 +236,11 @@ export class EntityPicker extends LitElement {
         const override = this.overrides[id];
         const scheduled = this.scheduledStates[id];
         const currentState = this.hass?.states?.[id]?.state === "on" ? "on" : "off";
+        const isUnavailable = this.unavailableEntities.includes(id);
         let rowClass = "";
-        if (this.showOverrides && override) {
+        if (isUnavailable) {
+            rowClass = "unavailable";
+        } else if (this.showOverrides && override) {
             rowClass = override === scheduled ? "override-match" : "override-conflict";
         }
 
@@ -240,6 +260,7 @@ export class EntityPicker extends LitElement {
           ${this._friendlyName(id)}
           <span class="entity-id">${id}</span>
         </span>
+        ${isUnavailable ? html`<span class="unavailable-badge">unavailable</span>` : nothing}
         ${this.showOverrides && this.slotType !== "color" ? html`
           <span class="override-controls">
             <button

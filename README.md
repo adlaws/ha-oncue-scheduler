@@ -19,6 +19,7 @@ for any toggleable entity using a visual grid-based UI.
 * Schedule on/off states for switches, lights, fans, input booleans,
   and any other toggleable entity
 * Visual grid editor with 15-minute time slots (96 slots per day)
+* Current time indicator on the grid with dashed vertical line
 * Click to toggle individual slots, drag to select ranges
 * Three cadence modes:
     * **Daily** - one schedule applied every day
@@ -28,6 +29,8 @@ for any toggleable entity using a visual grid-based UI.
 * Conflict detection warns when schedules overlap on the same entity
 * Runtime entity overrides to temporarily force an entity on or off
 * Automatic revert of external state changes after a configurable delay
+* Unavailable entity detection with visual indicator in the UI
+* Automatic state recovery when an unavailable entity comes back online
 * Bulk actions: set all slots on/off, copy Monday to all days
 * Responsive layout with collapsible sidebar on small screens
 
@@ -85,6 +88,12 @@ panel to your sidebar.
 * **Copy Mon to All** (weekly cadence) copies Monday's pattern
   to all days
 * Hover over a cell to see its time range (e.g. "09:00 - 09:15")
+* A dashed red line marks the current time, with time labels above
+  and below the grid
+* For **weekly** schedules, the current day's row is highlighted
+  with a yellow background
+* For **custom** schedules, today's row is highlighted and past
+  dates are faded
 
 ### Entity Overrides
 
@@ -94,6 +103,18 @@ entity list for an existing schedule, click the **On** or **Off**
 button next to an entity to set an override. Click the same button
 again to clear it. Overrides persist until cleared and take priority
 over the scheduled slot value during evaluation.
+
+### Unavailable Entities
+
+If an entity in an active schedule becomes unavailable (e.g. a device
+loses power, batteries run out, or it is unplugged), the entity row
+in the editor displays an **UNAVAILABLE** badge. The coordinator
+skips unavailable entities during evaluation and logs a warning.
+
+When the entity comes back online, the coordinator detects the state
+transition and immediately applies the correct scheduled state
+(respecting any active override), rather than waiting for the next
+15-minute evaluation tick.
 
 ### Revert External Changes
 
@@ -131,11 +152,14 @@ The coordinator evaluates all active schedules every 15 minutes
 2. Determines the current day key (based on the cadence)
 3. Reads the slot value (on or off)
 4. Applies any active override for the entity
-5. Calls `homeassistant.turn_on` or `homeassistant.turn_off` on each
+5. Skips entities that are unavailable or unknown (logs a warning)
+6. Calls `homeassistant.turn_on` or `homeassistant.turn_off` on each
    target entity (only if the entity's current state differs)
 
 On startup, the coordinator evaluates immediately rather than waiting
-for the next 15-minute boundary.
+for the next 15-minute boundary. It also monitors entity state
+changes: when an entity transitions from unavailable to available,
+the scheduled state is applied immediately.
 
 ## Development
 
@@ -171,9 +195,10 @@ The dev harness (`frontend/dev/mock-hass.ts`) provides:
 
 * Seed schedules (daily, weekly, and a paused schedule)
 * Mock entities across all supported domains (`switch`, `light`,
-  `fan`, `input_boolean`)
+  `fan`, `input_boolean`), including one unavailable entity to
+  demonstrate the unavailability indicator
 * In-memory handling of all WebSocket APIs (list, get, save, delete,
-  overrides)
+  overrides, unavailable entity tracking)
 
 Changes made in the preview (creating/editing/deleting schedules)
 persist in memory until the page is refreshed.
@@ -204,7 +229,10 @@ changes.
 * Verify the entity ID is correct
   (check in Developer Tools > States)
 * Ensure the entity is not in an `unavailable` or `unknown` state;
-  the coordinator skips entities in these states and logs a warning
+  the coordinator skips entities in these states and logs a warning.
+  Unavailable entities are flagged in the UI with an **UNAVAILABLE**
+  badge. When the entity comes back online, the scheduled state is
+  applied automatically
 * Check the Home Assistant logs for warnings from `oncue`
 
 ### Schedule not activating

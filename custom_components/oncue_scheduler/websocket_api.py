@@ -322,6 +322,7 @@ def ws_get_overrides(
     connection.send_result(msg["id"], {
         "overrides": coordinator.get_overrides(msg["schedule_id"]),
         "scheduled_states": coordinator.get_scheduled_states(msg["schedule_id"]),
+        "unavailable_entities": coordinator.get_unavailable_entities(msg["schedule_id"]),
     })
 
 
