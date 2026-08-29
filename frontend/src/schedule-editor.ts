@@ -1,9 +1,12 @@
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles } from "./styles";
-import type { Schedule, Conflict, HomeAssistant } from "./types";
+import type { Schedule, Conflict, HomeAssistant, HvacPreset, PaletteEntry, PaletteEntryObject } from "./types";
+import { normalizePaletteEntry, paletteEntryDisplayColor, paletteEntryBackground } from "./types";
 import "./schedule-grid";
 import "./entity-picker";
+import "./icon-picker";
+import "./mdi-icon";
 import "./toast-notification";
 import type { ToastNotification } from "./toast-notification";
 
@@ -36,6 +39,8 @@ export class ScheduleEditor extends LitElement {
     @property({ attribute: false }) hass!: HomeAssistant;
     @property({ attribute: false }) schedule: Schedule | null = null;
     @property({ type: Boolean }) isNew = false;
+    @property({ attribute: false }) globalHvacPresets: HvacPreset[] = [];
+    @property({ attribute: false }) globalColorPresets: PaletteEntry[] = [];
 
     @state() private _name = "";
     @state() private _entityIds: string[] = [];
@@ -56,7 +61,15 @@ export class ScheduleEditor extends LitElement {
     @state() private _unavailableEntities: string[] = [];
     @state() private _revertDelay: number | null = 180;
     @state() private _slotType: string = "on_off";
-    @state() private _palette: string[] = ["#ff0000", "#00ff00", "#0000ff", "#ffff00", "#ff00ff", "#00ffff", "#ff8800", "#ffffff"];
+    @state() private _palette: PaletteEntry[] = ["#ff0000", "#00ff00", "#0000ff", "#ffff00", "#ff00ff", "#00ffff", "#ff8800", "#ffffff"];
+    @state() private _hvacPresets: HvacPreset[] = [];
+    @state() private _hvacEditIndex: number | null = null;
+    @state() private _confirmDeletePresetIndex: number | null = null;
+    @state() private _confirmDeletePresetUsage: { id: string; name: string }[] = [];
+    @state() private _paletteEditIndex: number | null = null;
+    @state() private _confirmDeletePaletteIndex: number | null = null;
+    @state() private _confirmDeletePaletteUsage: { id: string; name: string }[] = [];
+    @state() private _pendingSlotType: string | null = null;
 
     private _unsubOverrides: (() => void) | null = null;
 
@@ -332,6 +345,202 @@ export class ScheduleEditor extends LitElement {
       .palette-add:hover {
         background: var(--ss-cell-off);
       }
+      .palette-entry-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        width: 36px;
+        height: 36px;
+        border-radius: 6px;
+        cursor: pointer;
+        border: 2px solid transparent;
+        transition: border-color 0.15s, box-shadow 0.15s;
+        position: relative;
+        justify-content: center;
+        box-sizing: border-box;
+      }
+      .palette-entry-chip:hover {
+        box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+      }
+      .palette-entry-chip .palette-mode-label {
+        font-size: 14px;
+        text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+        pointer-events: none;
+      }
+      .palette-entry-chip .chip-remove {
+        position: absolute;
+        top: -6px;
+        right: -6px;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        border: none;
+        background: var(--error-color, #db4437);
+        color: #fff;
+        font-size: 9px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        line-height: 1;
+      }
+      .palette-edit-form {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        padding: 12px;
+        border: 1px solid var(--ss-border);
+        border-radius: 8px;
+        background: var(--secondary-background-color, #f5f5f5);
+        margin-top: 8px;
+      }
+      .palette-edit-row {
+        display: flex;
+        gap: 8px;
+        align-items: flex-end;
+      }
+      .palette-edit-row input[type="color"] {
+        width: 36px;
+        height: 36px;
+        padding: 0;
+        border: 1px solid var(--ss-border);
+        border-radius: 4px;
+        cursor: pointer;
+        background: none;
+      }
+      .palette-mode-help {
+        font-size: 12px;
+        color: var(--secondary-text-color, #727272);
+        padding: 4px 0;
+      }
+      .cycle-config {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .cycle-colors {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        align-items: center;
+      }
+      .cycle-options {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .cycle-options .form-group {
+        flex: 1;
+        min-width: 120px;
+      }
+      .hvac-presets {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .hvac-preset-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        align-items: center;
+      }
+      .hvac-preset-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 4px 10px;
+        border-radius: 16px;
+        font-size: 12px;
+        cursor: pointer;
+        border: 2px solid transparent;
+        transition: border-color 0.15s, box-shadow 0.15s;
+        color: #fff;
+        text-shadow: 0 1px 2px rgba(0,0,0,0.4);
+        position: relative;
+      }
+      .hvac-preset-chip:hover {
+        box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+      }
+      .hvac-preset-chip .chip-icon {
+        --mdi-icon-size: 16px;
+        flex-shrink: 0;
+      }
+      .hvac-preset-chip .chip-remove {
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        border: none;
+        background: rgba(0,0,0,0.3);
+        color: #fff;
+        font-size: 9px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        line-height: 1;
+        margin-left: 2px;
+      }
+      .hvac-preset-chip .chip-remove:hover {
+        background: var(--error-color, #db4437);
+      }
+      .preset-confirm-overlay {
+        padding: 12px;
+        border: 1px solid var(--ss-border);
+        border-radius: 8px;
+        background: var(--secondary-background-color, #f5f5f5);
+        font-size: 13px;
+      }
+      .preset-confirm-overlay p {
+        margin: 0 0 8px;
+      }
+      .preset-confirm-overlay .confirm-actions {
+        display: flex;
+        gap: 6px;
+        justify-content: flex-end;
+      }
+      .hvac-edit-form {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 8px;
+        padding: 12px;
+        border: 1px solid var(--ss-border);
+        border-radius: 8px;
+        background: var(--secondary-background-color, #f5f5f5);
+      }
+      .hvac-edit-form .form-group {
+        margin-bottom: 0;
+      }
+      .hvac-edit-form .hvac-edit-actions {
+        grid-column: 1 / -1;
+        display: flex;
+        gap: 6px;
+        justify-content: flex-end;
+      }
+      .hvac-edit-form .color-alias-row {
+        display: flex;
+        gap: 8px;
+        align-items: flex-end;
+        grid-column: 1 / -1;
+      }
+      .hvac-edit-form .color-alias-row input[type="color"] {
+        width: 36px;
+        height: 36px;
+        padding: 0;
+        border: 1px solid var(--ss-border);
+        border-radius: 4px;
+        cursor: pointer;
+        background: none;
+        flex-shrink: 0;
+      }
+      .hvac-edit-form .color-alias-row .alias-input {
+        flex: 1;
+      }
+      .hvac-edit-form .icon-picker-group {
+        flex: 1;
+        min-width: 160px;
+      }
     `,
     ];
 
@@ -341,6 +550,8 @@ export class ScheduleEditor extends LitElement {
             this._confirmDelete = false;
             this._confirmDiscard = false;
             this._loadOverrides();
+        } else if (changed.has("globalHvacPresets") && !this._dirty) {
+            this._hvacPresets = this.globalHvacPresets.map((p) => ({ ...p }));
         }
     }
 
@@ -366,7 +577,9 @@ export class ScheduleEditor extends LitElement {
                 ? (this.schedule as any).revert_delay
                 : 180;
             this._slotType = this.schedule.slot_type ?? "on_off";
-            this._palette = this.schedule.palette ? [...this.schedule.palette] : ["#ff0000", "#00ff00", "#0000ff", "#ffff00", "#ff00ff", "#00ffff", "#ff8800", "#ffffff"];
+            this._palette = this.globalColorPresets.length > 0 ? [...this.globalColorPresets] : ["#ff0000", "#00ff00", "#0000ff", "#ffff00", "#ff00ff", "#00ffff", "#ff8800", "#ffffff"];
+            this._hvacPresets = this.globalHvacPresets.map((p) => ({ ...p }));
+            this._hvacEditIndex = null;
         } else {
             this._name = "";
             this._entityIds = [];
@@ -378,7 +591,9 @@ export class ScheduleEditor extends LitElement {
             this._active = true;
             this._revertDelay = 180;
             this._slotType = "on_off";
-            this._palette = ["#ff0000", "#00ff00", "#0000ff", "#ffff00", "#ff00ff", "#00ffff", "#ff8800", "#ffffff"];
+            this._palette = this.globalColorPresets.length > 0 ? [...this.globalColorPresets] : ["#ff0000", "#00ff00", "#0000ff", "#ffff00", "#ff00ff", "#00ffff", "#ff8800", "#ffffff"];
+            this._hvacPresets = this.globalHvacPresets.map((p) => ({ ...p }));
+            this._hvacEditIndex = null;
         }
         this._dirty = false;
         this._conflicts = [];
@@ -605,6 +820,14 @@ export class ScheduleEditor extends LitElement {
             @change=${(e: Event) => {
                 const newType = (e.target as HTMLSelectElement).value;
                 if (newType !== this._slotType) {
+                    const hasData = Object.values(this._slots).some(
+                        arr => arr.some(v => v !== 0)
+                    );
+                    if (hasData) {
+                        this._pendingSlotType = newType;
+                        (e.target as HTMLSelectElement).value = this._slotType;
+                        return;
+                    }
                     this._slotType = newType;
                     this._slots = defaultSlots(this._cadence);
                     if (this._cadence === "custom") {
@@ -616,39 +839,102 @@ export class ScheduleEditor extends LitElement {
           >
             <option value="on_off">On/Off</option>
             <option value="color">Color</option>
+            <option value="hvac">HVAC</option>
           </select>
+          ${this._pendingSlotType ? html`
+            <div class="preset-confirm-overlay">
+              <p>Changing slot type will <b>clear all scheduled data</b>.</p>
+              <p>The current <b>${this._slotType}</b> values are incompatible with <b>${this._pendingSlotType}</b> and cannot be preserved.</p>
+              <p style="margin-bottom:0">If you need both types, create a separate schedule instead.</p>
+              <div class="confirm-actions">
+                <button class="secondary" @click=${() => { this._pendingSlotType = null; }}>Cancel</button>
+                <button class="danger" @click=${() => {
+                    this._slotType = this._pendingSlotType!;
+                    this._pendingSlotType = null;
+                    this._slots = defaultSlots(this._cadence);
+                    if (this._cadence === "custom") {
+                        this._rebuildCustomSlots();
+                    }
+                    this._dirty = true;
+                }}>Change &amp; Clear</button>
+              </div>
+            </div>
+          ` : nothing}
         </div>
 
         ${this._slotType === "color" ? html`
           <div class="form-group full-width">
             <label>Color Palette</label>
             <div class="palette-editor">
-              ${this._palette.map((color, i) => html`
-                <div class="palette-entry">
-                  <input
-                    type="color"
-                    .value=${color}
-                    @input=${(e: InputEvent) => {
-                    const newPalette = [...this._palette];
-                    newPalette[i] = (e.target as HTMLInputElement).value;
-                    this._palette = newPalette;
-                    this._dirty = true;
-                }}
-                  />
+              ${this._palette.map((entry, i) => {
+                    const norm = normalizePaletteEntry(entry);
+                    return html`
+                <div class="palette-entry-chip"
+                     style="background: ${paletteEntryBackground(norm)}"
+                     title="${this._paletteEntryTooltip(norm)}"
+                     @click=${() => { this._paletteEditIndex = i; }}>
+                  <span class="palette-mode-label">${this._paletteModeBadge(norm.mode)}</span>
                   ${this._palette.length > 1 ? html`
-                    <button class="palette-remove" @click=${() => {
-                        this._palette = this._palette.filter((_, idx) => idx !== i);
-                        this._dirty = true;
-                    }}>✕</button>
+                    <button class="chip-remove" @click=${(e: Event) => {
+                                e.stopPropagation();
+                                this._requestDeletePaletteEntry(i);
+                            }}>✕</button>
                   ` : nothing}
                 </div>
-              `)}
+              `;
+                })}
               ${this._palette.length < 10 ? html`
                 <button class="palette-add" @click=${() => {
                         this._palette = [...this._palette, "#888888"];
+                        this._paletteEditIndex = this._palette.length - 1;
                         this._dirty = true;
                     }}>+</button>
               ` : nothing}
+            </div>
+            ${this._confirmDeletePaletteIndex !== null && this._confirmDeletePaletteIndex < this._palette.length
+                    ? this._renderPaletteDeleteConfirm(this._confirmDeletePaletteIndex)
+                    : nothing}
+            ${this._paletteEditIndex !== null && this._paletteEditIndex < this._palette.length
+                    ? this._renderPaletteEditForm(
+                        normalizePaletteEntry(this._palette[this._paletteEditIndex]),
+                        this._paletteEditIndex,
+                    )
+                    : nothing}
+          </div>
+        ` : nothing}
+
+        ${this._slotType === "hvac" ? html`
+          <div class="form-group full-width">
+            <label>HVAC Presets</label>
+            <div class="hvac-presets">
+              <div class="hvac-preset-list">
+                ${this._hvacPresets.map((preset, i) => html`
+                  <div
+                    class="hvac-preset-chip"
+                    style="background: ${preset.color}"
+                    title="${this._hvacPresetTooltip(preset)}"
+                    @click=${() => { this._hvacEditIndex = i; }}
+                  >
+                    ${preset.icon ? html`<mdi-icon class="chip-icon" .icon=${preset.icon}></mdi-icon>` : nothing}
+                    ${preset.alias || this._hvacPresetLabel(preset)}
+                    ${this._hvacPresets.length > 1 ? html`
+                      <button class="chip-remove" @click=${(e: Event) => {
+                                e.stopPropagation();
+                                this._requestDeletePreset(i);
+                            }}>✕</button>
+                    ` : nothing}
+                  </div>
+                `)}
+                ${this._hvacPresets.length < 20 ? html`
+                  <button class="palette-add" @click=${this._addHvacPreset}>+</button>
+                ` : nothing}
+              </div>
+              ${this._confirmDeletePresetIndex !== null && this._confirmDeletePresetIndex < this._hvacPresets.length
+                    ? this._renderPresetDeleteConfirm(this._confirmDeletePresetIndex)
+                    : nothing}
+              ${this._hvacEditIndex !== null && this._hvacEditIndex < this._hvacPresets.length
+                    ? this._renderHvacEditForm(this._hvacPresets[this._hvacEditIndex], this._hvacEditIndex)
+                    : nothing}
             </div>
           </div>
         ` : nothing}
@@ -662,12 +948,462 @@ export class ScheduleEditor extends LitElement {
           .customDates=${customDates}
           .slotType=${this._slotType}
           .palette=${this._palette}
+          .hvacPresets=${this._hvacPresets}
           @slots-changed=${(e: CustomEvent) => {
                 this._slots = e.detail.slots;
                 this._dirty = true;
             }}
         ></schedule-grid>
       </div>
+      </div>
+    `;
+    }
+
+    private _hvacPresetLabel(preset: HvacPreset): string {
+        const parts: string[] = [];
+        if (preset.temperature !== null) parts.push(`${preset.temperature}°`);
+        if (preset.hvac_mode) parts.push(preset.hvac_mode);
+        if (preset.fan_mode) parts.push(preset.fan_mode);
+        return parts.join(" | ") || "Preset";
+    }
+
+    private _hvacPresetTooltip(preset: HvacPreset): string {
+        const lines: string[] = [];
+        if (preset.alias) lines.push(preset.alias);
+        if (preset.temperature !== null) lines.push(`Temperature: ${preset.temperature}°C`);
+        if (preset.hvac_mode) lines.push(`Mode: ${preset.hvac_mode}`);
+        if (preset.fan_mode) lines.push(`Fan: ${preset.fan_mode}`);
+        return lines.join("\n");
+    }
+
+    private _addHvacPreset() {
+        this._hvacPresets = [
+            ...this._hvacPresets,
+            { temperature: 22, hvac_mode: "cool", fan_mode: "auto", color: "#90caf9" },
+        ];
+        this._hvacEditIndex = this._hvacPresets.length - 1;
+        this._dirty = true;
+    }
+
+    private _presetSlotCount(index: number): number {
+        const paletteValue = index + 1;
+        let count = 0;
+        for (const arr of Object.values(this._slots)) {
+            for (const v of arr) {
+                if (v === paletteValue) count++;
+            }
+        }
+        return count;
+    }
+
+    private _renderPresetDeleteConfirm(index: number) {
+        const preset = this._hvacPresets[index];
+        const label = preset.alias || this._hvacPresetLabel(preset);
+        const localCount = this._presetSlotCount(index);
+        const usage = this._confirmDeletePresetUsage;
+        // Filter out the current schedule from the usage list
+        const otherSchedules = usage.filter((s) => s.id !== this.schedule?.id);
+        const currentName = this.schedule?.name;
+        const usedHere = localCount > 0;
+
+        let usageMsg;
+        if (usedHere && otherSchedules.length > 0) {
+            const names = otherSchedules.map((s) => `'${s.name}'`).join(", ");
+            usageMsg = html`This preset is in use by this schedule${currentName ? ` ('${currentName}')` : ""} and ${names} — affected slots will be cleared.`;
+        } else if (usedHere) {
+            usageMsg = html`This preset is used in <b>${localCount}</b> slot${localCount > 1 ? "s" : ""} in this schedule — they will be cleared.`;
+        } else if (otherSchedules.length > 0) {
+            const names = otherSchedules.map((s) => `'${s.name}'`).join(", ");
+            usageMsg = html`This preset is in use by ${names} — affected slots will be cleared.`;
+        } else {
+            usageMsg = html`This preset is not used in any schedules.`;
+        }
+
+        return html`
+      <div class="preset-confirm-overlay">
+        <p>Delete preset <b>${label}</b>?</p>
+        <p>${usageMsg}</p>
+        <div class="confirm-actions">
+          <button class="secondary" @click=${() => { this._confirmDeletePresetIndex = null; }}>Cancel</button>
+          <button class="danger" @click=${() => { this._doRemoveHvacPreset(index); }}>Delete</button>
+        </div>
+      </div>
+    `;
+    }
+
+    private async _requestDeletePreset(index: number) {
+        try {
+            const result = await this.hass.connection.sendMessagePromise({
+                type: "oncue_scheduler/hvac_preset_usage",
+                index,
+            });
+            this._confirmDeletePresetUsage = result.schedules ?? [];
+        } catch {
+            this._confirmDeletePresetUsage = [];
+        }
+        this._confirmDeletePresetIndex = index;
+    }
+
+    private _doRemoveHvacPreset(index: number) {
+        this._confirmDeletePresetIndex = null;
+        const removedValue = index + 1;
+        // Clear slots using this preset and remap higher indices
+        const newSlots: Record<string, number[]> = {};
+        for (const [key, arr] of Object.entries(this._slots)) {
+            newSlots[key] = arr.map((v) => {
+                if (v === removedValue) return 0;
+                if (v > removedValue) return v - 1;
+                return v;
+            });
+        }
+        this._slots = newSlots;
+        this._hvacPresets = this._hvacPresets.filter((_, i) => i !== index);
+        if (this._hvacEditIndex !== null) {
+            if (this._hvacEditIndex === index) this._hvacEditIndex = null;
+            else if (this._hvacEditIndex > index) this._hvacEditIndex--;
+        }
+        this._dirty = true;
+    }
+
+    private _updateHvacPreset(index: number, patch: Partial<HvacPreset>) {
+        const updated = [...this._hvacPresets];
+        updated[index] = { ...updated[index], ...patch };
+        this._hvacPresets = updated;
+        this._dirty = true;
+    }
+
+    private _renderHvacEditForm(preset: HvacPreset, index: number) {
+        return html`
+      <div class="hvac-edit-form">
+        <div class="form-group">
+          <label>Temperature (°C)</label>
+          <input
+            type="number"
+            step="0.5"
+            .value=${preset.temperature !== null ? String(preset.temperature) : ""}
+            @input=${(e: InputEvent) => {
+                const val = (e.target as HTMLInputElement).value;
+                this._updateHvacPreset(index, { temperature: val ? parseFloat(val) : null });
+            }}
+          />
+        </div>
+        <div class="form-group">
+          <label>HVAC Mode</label>
+          <select
+            .value=${preset.hvac_mode ?? ""}
+            @change=${(e: Event) => {
+                const val = (e.target as HTMLSelectElement).value;
+                this._updateHvacPreset(index, { hvac_mode: val || null });
+            }}
+          >
+            <option value="">—</option>
+            <option value="off">Off</option>
+            <option value="heat">Heat</option>
+            <option value="cool">Cool</option>
+            <option value="heat_cool">Heat/Cool</option>
+            <option value="auto">Auto</option>
+            <option value="dry">Dry</option>
+            <option value="fan_only">Fan Only</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Fan Mode</label>
+          <select
+            .value=${preset.fan_mode ?? ""}
+            @change=${(e: Event) => {
+                const val = (e.target as HTMLSelectElement).value;
+                this._updateHvacPreset(index, { fan_mode: val || null });
+            }}
+          >
+            <option value="">—</option>
+            <option value="auto">Auto</option>
+            <option value="low">Low</option>
+            <option value="medium_low">Medium Low</option>
+            <option value="medium">Medium</option>
+            <option value="medium_high">Medium High</option>
+            <option value="high">High</option>
+          </select>
+        </div>
+        <div class="color-alias-row">
+          <div class="form-group">
+            <label>Color</label>
+            <input
+              type="color"
+              .value=${preset.color}
+              @input=${(e: InputEvent) => {
+                this._updateHvacPreset(index, { color: (e.target as HTMLInputElement).value });
+            }}
+            />
+          </div>
+          <div class="form-group alias-input">
+            <label>Alias</label>
+            <input
+              type="text"
+              .value=${preset.alias ?? ""}
+              placeholder="e.g. Daytime Cooling"
+              @input=${(e: InputEvent) => {
+                this._updateHvacPreset(index, { alias: (e.target as HTMLInputElement).value || undefined });
+            }}
+            />
+          </div>
+          <div class="form-group icon-picker-group">
+            <label>Icon</label>
+            <icon-picker
+              .value=${preset.icon ?? ""}
+              @icon-changed=${(e: CustomEvent) => {
+                this._updateHvacPreset(index, { icon: e.detail.icon || undefined });
+            }}
+            ></icon-picker>
+          </div>
+        </div>
+        <div class="hvac-edit-actions">
+          <button class="secondary" @click=${() => { this._hvacEditIndex = null; }}>Done</button>
+        </div>
+      </div>
+    `;
+    }
+
+    // ── Palette entry editing ──
+
+    private _paletteModeBadge(mode: string): string {
+        switch (mode) {
+            case "crossfade": return "⇢";
+            case "cycle": return "⟳";
+            case "tv": return "📺";
+            default: return "";
+        }
+    }
+
+    private _paletteEntryTooltip(entry: PaletteEntryObject): string {
+        const lines: string[] = [];
+        if (entry.mode === "cycle" && entry.alias) lines.push(entry.alias);
+        lines.push(entry.color);
+        if (entry.mode !== "solid") lines.push(`Mode: ${entry.mode}`);
+        if (entry.mode === "cycle" && entry.colors) {
+            lines.push(`Colors: ${entry.colors.length}`);
+            lines.push(`Transition: ${entry.transition ?? "snap"}`);
+            lines.push(`Rate: ${entry.rate ?? 1}x per block`);
+        }
+        return lines.join("\n");
+    }
+
+    private _renderPaletteDeleteConfirm(index: number) {
+        const norm = normalizePaletteEntry(this._palette[index]);
+        const label = (norm.mode === "cycle" && norm.alias) ? norm.alias : norm.color;
+        const localCount = this._paletteSlotCount(index);
+        const usage = this._confirmDeletePaletteUsage;
+        const otherSchedules = usage.filter((s) => s.id !== this.schedule?.id);
+        const currentName = this.schedule?.name;
+        const usedHere = localCount > 0;
+
+        let usageMsg;
+        if (usedHere && otherSchedules.length > 0) {
+            const names = otherSchedules.map((s) => `'${s.name}'`).join(", ");
+            usageMsg = html`This preset is in use by this schedule${currentName ? ` ('${currentName}')` : ""} and ${names} — affected slots will be cleared.`;
+        } else if (usedHere) {
+            usageMsg = html`This preset is used in <b>${localCount}</b> slot${localCount > 1 ? "s" : ""} in this schedule — they will be cleared.`;
+        } else if (otherSchedules.length > 0) {
+            const names = otherSchedules.map((s) => `'${s.name}'`).join(", ");
+            usageMsg = html`This preset is in use by ${names} — affected slots will be cleared.`;
+        } else {
+            usageMsg = html`This preset is not used in any schedules.`;
+        }
+
+        return html`
+      <div class="preset-confirm-overlay">
+        <p>Delete color preset <b>${label}</b>?</p>
+        <p>${usageMsg}</p>
+        <div class="confirm-actions">
+          <button class="secondary" @click=${() => { this._confirmDeletePaletteIndex = null; }}>Cancel</button>
+          <button class="danger" @click=${() => { this._doRemovePaletteEntry(index); }}>Delete</button>
+        </div>
+      </div>
+    `;
+    }
+
+    private async _requestDeletePaletteEntry(index: number) {
+        try {
+            const result = await this.hass.connection.sendMessagePromise({
+                type: "oncue_scheduler/color_preset_usage",
+                index,
+            });
+            this._confirmDeletePaletteUsage = result.schedules ?? [];
+        } catch {
+            this._confirmDeletePaletteUsage = [];
+        }
+        this._confirmDeletePaletteIndex = index;
+    }
+
+    private _paletteSlotCount(index: number): number {
+        const paletteValue = index + 1;
+        let count = 0;
+        for (const arr of Object.values(this._slots)) {
+            for (const v of arr) {
+                if (v === paletteValue) count++;
+            }
+        }
+        return count;
+    }
+
+    private _doRemovePaletteEntry(index: number) {
+        this._confirmDeletePaletteIndex = null;
+        const removedValue = index + 1;
+        const newSlots: Record<string, number[]> = {};
+        for (const [key, arr] of Object.entries(this._slots)) {
+            newSlots[key] = arr.map((v) => {
+                if (v === removedValue) return 0;
+                if (v > removedValue) return v - 1;
+                return v;
+            });
+        }
+        this._slots = newSlots;
+        this._palette = this._palette.filter((_, i) => i !== index);
+        if (this._paletteEditIndex !== null) {
+            if (this._paletteEditIndex === index) this._paletteEditIndex = null;
+            else if (this._paletteEditIndex > index) this._paletteEditIndex--;
+        }
+        this._dirty = true;
+    }
+
+    private _updatePaletteEntry(index: number, patch: Partial<PaletteEntryObject>) {
+        const updated = [...this._palette];
+        const norm = normalizePaletteEntry(updated[index]);
+        updated[index] = { ...norm, ...patch };
+        this._palette = updated;
+        this._dirty = true;
+    }
+
+    private _renderPaletteEditForm(entry: PaletteEntryObject, index: number) {
+        const maxRate = entry.colors && entry.colors.length >= 2
+            ? Math.floor(900 / (entry.colors.length * 5))
+            : 30;
+        return html`
+      <div class="palette-edit-form">
+        <div class="palette-edit-row">
+          <div class="form-group">
+            <label>Color</label>
+            <input
+              type="color"
+              .value=${entry.color}
+              @input=${(e: InputEvent) => {
+                this._updatePaletteEntry(index, { color: (e.target as HTMLInputElement).value });
+            }}
+            />
+          </div>
+          <div class="form-group" style="flex:1">
+            <label>Mode</label>
+            <select
+              .value=${entry.mode}
+              @change=${(e: Event) => {
+                const mode = (e.target as HTMLSelectElement).value as PaletteEntryObject["mode"];
+                const patch: Partial<PaletteEntryObject> = { mode };
+                if (mode === "cycle" && (!entry.colors || entry.colors.length < 2)) {
+                    patch.colors = [entry.color, "#888888"];
+                    patch.transition = "snap";
+                    patch.rate = 1;
+                }
+                this._updatePaletteEntry(index, patch);
+            }}
+            >
+              <option value="solid">Solid</option>
+              <option value="crossfade">Cross-fade</option>
+              <option value="cycle">Cycle</option>
+              <option value="tv">TV Mode</option>
+            </select>
+          </div>
+        </div>
+
+        ${entry.mode === "crossfade" ? html`
+          <div class="palette-mode-help">
+            Gradually fades from this color to the next slot's color over the 15-minute block.
+          </div>
+        ` : nothing}
+
+        ${entry.mode === "tv" ? html`
+          <div class="palette-mode-help">
+            Semi-randomly cycles through TV-like colors to simulate light from a television.
+          </div>
+        ` : nothing}
+
+        ${entry.mode === "cycle" ? html`
+          <div class="cycle-config">
+            <label>Cycle Colors</label>
+            <div class="cycle-colors">
+              ${(entry.colors ?? []).map((c, ci) => html`
+                <div class="palette-entry">
+                  <input
+                    type="color"
+                    .value=${c}
+                    @input=${(e: InputEvent) => {
+                    const newColors = [...(entry.colors ?? [])];
+                    newColors[ci] = (e.target as HTMLInputElement).value;
+                    this._updatePaletteEntry(index, { colors: newColors });
+                }}
+                  />
+                  ${(entry.colors ?? []).length > 2 ? html`
+                    <button class="palette-remove" @click=${() => {
+                        const newColors = (entry.colors ?? []).filter((_, j) => j !== ci);
+                        this._updatePaletteEntry(index, { colors: newColors });
+                    }}>✕</button>
+                  ` : nothing}
+                </div>
+              `)}
+              ${(entry.colors ?? []).length < 10 ? html`
+                <button class="palette-add" @click=${() => {
+                        const newColors = [...(entry.colors ?? []), "#888888"];
+                        this._updatePaletteEntry(index, { colors: newColors });
+                    }}>+</button>
+              ` : nothing}
+            </div>
+            <div class="cycle-options">
+              <div class="form-group" style="flex:2">
+                <label>Alias</label>
+                <input
+                  type="text"
+                  .value=${entry.alias ?? ""}
+                  placeholder="e.g. Christmas Lighting"
+                  @input=${(e: InputEvent) => {
+                    this._updatePaletteEntry(index, { alias: (e.target as HTMLInputElement).value || undefined });
+                }}
+                />
+              </div>
+              <div class="form-group">
+                <label>Transition</label>
+                <select
+                  .value=${entry.transition ?? "snap"}
+                  @change=${(e: Event) => {
+                    this._updatePaletteEntry(index, {
+                        transition: (e.target as HTMLSelectElement).value as "snap" | "fade",
+                    });
+                }}
+                >
+                  <option value="snap">Snap</option>
+                  <option value="fade">Cross-fade</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Rate (cycles per block)</label>
+                <input
+                  type="number"
+                  min="0.1"
+                  max=${maxRate}
+                  step="0.1"
+                  .value=${String(entry.rate ?? 1)}
+                  @input=${(e: InputEvent) => {
+                    const val = parseFloat((e.target as HTMLInputElement).value);
+                    if (!isNaN(val) && val > 0) {
+                        this._updatePaletteEntry(index, { rate: val });
+                    }
+                }}
+                />
+              </div>
+            </div>
+          </div>
+        ` : nothing}
+
+        <div class="hvac-edit-actions">
+          <button class="secondary" @click=${() => { this._paletteEditIndex = null; }}>Done</button>
+        </div>
       </div>
     `;
     }
@@ -695,6 +1431,22 @@ export class ScheduleEditor extends LitElement {
 
         this._saving = true;
         try {
+            // Save HVAC presets globally before saving the schedule
+            if (this._slotType === "hvac") {
+                await this.hass.connection.sendMessagePromise({
+                    type: "oncue_scheduler/save_hvac_presets",
+                    hvac_presets: this._hvacPresets,
+                });
+            }
+
+            // Save color presets globally before saving the schedule
+            if (this._slotType === "color") {
+                await this.hass.connection.sendMessagePromise({
+                    type: "oncue_scheduler/save_color_presets",
+                    color_presets: this._palette,
+                });
+            }
+
             const schedule: Record<string, unknown> = {
                 name: this._name.trim(),
                 entity_ids: entityIds,
@@ -708,9 +1460,6 @@ export class ScheduleEditor extends LitElement {
                 slots: this._slots,
                 revert_delay: this._revertDelay,
             };
-            if (this._slotType === "color") {
-                schedule.palette = this._palette;
-            }
             if (this.schedule?.id) {
                 schedule.id = this.schedule.id;
             }

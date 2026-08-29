@@ -176,6 +176,30 @@ async function handleMessage(msg: Record<string, unknown>): Promise<any> {
             };
         }
 
+        case "oncue_scheduler/get_hvac_presets":
+            return { hvac_presets: [] };
+
+        case "oncue_scheduler/save_hvac_presets":
+            return { hvac_presets: msg.hvac_presets ?? [] };
+
+        case "oncue_scheduler/delete_hvac_preset":
+            return { hvac_presets: [] };
+
+        case "oncue_scheduler/hvac_preset_usage":
+            return { schedules: [] };
+
+        case "oncue_scheduler/get_color_presets":
+            return { color_presets: [] };
+
+        case "oncue_scheduler/save_color_presets":
+            return { color_presets: msg.color_presets ?? [] };
+
+        case "oncue_scheduler/delete_color_preset":
+            return { color_presets: [] };
+
+        case "oncue_scheduler/color_preset_usage":
+            return { schedules: [] };
+
         default:
             console.warn("[mock-hass] unhandled message type:", msg.type);
             return {};

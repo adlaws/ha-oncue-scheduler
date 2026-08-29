@@ -1,6 +1,9 @@
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles } from "./styles";
+import type { HvacPreset, PaletteEntry } from "./types";
+import { normalizePaletteEntry, paletteEntryDisplayColor, paletteEntryBackground } from "./types";
+import "./mdi-icon";
 
 const SLOTS_PER_DAY = 96;
 const MOBILE_SLOTS_PER_ROW = 16;
@@ -13,7 +16,8 @@ export class ScheduleGrid extends LitElement {
     @property({ type: Object }) slots: Record<string, number[]> = {};
     @property({ type: Array }) customDates: string[] = [];
     @property({ type: String }) slotType: string = "on_off";
-    @property({ type: Array }) palette: string[] = [];
+    @property({ type: Array }) palette: PaletteEntry[] = [];
+    @property({ type: Array }) hvacPresets: HvacPreset[] = [];
 
     @state() private _dragActive = false;
     @state() private _dragValue = 0;
@@ -271,6 +275,10 @@ export class ScheduleGrid extends LitElement {
         border: 2px solid transparent;
         box-sizing: border-box;
         transition: border-color 0.15s, transform 0.1s;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #fff;
       }
       .palette-swatch:hover {
         transform: scale(1.15);
@@ -421,12 +429,12 @@ export class ScheduleGrid extends LitElement {
     private _renderDesktopLayout() {
         const dayKeys = this._dayKeys;
         const hours = Array.from({ length: 24 }, (_, i) => i);
-        const isColor = this.slotType === "color";
+        const isPalette = this.slotType === "color" || this.slotType === "hvac";
 
         return html`
-      ${isColor ? this._renderPaletteBar() : nothing}
+      ${isPalette ? this._renderPaletteBar() : nothing}
       <div class="toolbar">
-        ${isColor
+        ${isPalette
                 ? html`
               <button class="secondary" @click=${() => this._bulkSet(this._activePaletteIndex)}>Fill All</button>
               <button class="secondary" @click=${() => this._bulkSet(0)}>Clear All</button>
@@ -479,7 +487,7 @@ export class ScheduleGrid extends LitElement {
     }
 
     private _renderMobileLayout() {
-        const isColor = this.slotType === "color";
+        const isPalette = this.slotType === "color" || this.slotType === "hvac";
         const dayKeys = this._allDayKeys;
         const selectedDay = this._effectiveMobileDay;
         const daySlots = this.slots[selectedDay] ?? new Array(SLOTS_PER_DAY).fill(0);
@@ -495,9 +503,9 @@ export class ScheduleGrid extends LitElement {
         ];
 
         return html`
-      ${isColor ? this._renderPaletteBar() : nothing}
+      ${isPalette ? this._renderPaletteBar() : nothing}
       <div class="toolbar">
-        ${isColor
+        ${isPalette
                 ? html`
               <button class="secondary" @click=${() => this._bulkSet(this._activePaletteIndex)}>Fill All</button>
               <button class="secondary" @click=${() => this._bulkSet(0)}>Clear All</button>
@@ -540,15 +548,15 @@ export class ScheduleGrid extends LitElement {
                         const slotIdx = startSlot + colIdx;
                         const val = daySlots[slotIdx];
                         const inDrag = this._isInDragRegion(qIdx, colIdx);
-                        const cellStyle = isColor ? this._colorCellStyle(val) : "";
+                        const cellStyle = isPalette ? this._paletteCellStyle(val) : "";
                         return html`
                     <div
-                      class="cell ${isColor ? (val ? "color-set" : "off") : (val ? "on" : "off")} ${isToday ? "today-row" : ""} ${inDrag ? "drag-preview" : ""} ${colIdx % 4 === 0 ? "hour-start" : ""}"
+                      class="cell ${isPalette ? (val ? "color-set" : "off") : (val ? "on" : "off")} ${isToday ? "today-row" : ""} ${inDrag ? "drag-preview" : ""} ${colIdx % 4 === 0 ? "hour-start" : ""}"
                       style=${cellStyle}
                       data-row=${qIdx}
                       data-col=${colIdx}
                       data-day=${selectedDay}
-                      title="${this._cellTooltip(slotIdx)}"
+                      title="${this._cellTooltip(slotIdx, val)}"
                       @mousedown=${(e: MouseEvent) => this._onMouseDown(e, qIdx, colIdx, selectedDay)}
                       @mouseenter=${(e: MouseEvent) => this._onMouseEnter(e, qIdx, colIdx)}
                       @touchstart=${(e: TouchEvent) => this._onTouchStart(e, qIdx, colIdx, selectedDay)}
@@ -577,7 +585,7 @@ export class ScheduleGrid extends LitElement {
         const slotIdx = row * MOBILE_SLOTS_PER_ROW + col;
         if (slotIdx >= SLOTS_PER_DAY) return;
         const daySlots = [...(this.slots[dayKey] ?? new Array(SLOTS_PER_DAY).fill(0))];
-        if (this.slotType === "color") {
+        if (this.slotType === "color" || this.slotType === "hvac") {
             daySlots[slotIdx] = daySlots[slotIdx] === this._activePaletteIndex ? 0 : this._activePaletteIndex;
         } else {
             daySlots[slotIdx] = daySlots[slotIdx] ? 0 : 1;
@@ -623,7 +631,7 @@ export class ScheduleGrid extends LitElement {
 
     private _renderRow(dayKey: string, rowIdx: number) {
         const daySlots = this.slots[dayKey] ?? new Array(SLOTS_PER_DAY).fill(0);
-        const isColor = this.slotType === "color";
+        const isPalette = this.slotType === "color" || this.slotType === "hvac";
         const weekEven = this.cadence === "custom" && this._weekIndex(dayKey) % 2 === 1;
         const rowState = this._rowTemporalState(dayKey);
         const isToday = rowState === "today";
@@ -632,15 +640,15 @@ export class ScheduleGrid extends LitElement {
       <div class="row-label ${weekEven ? "week-even" : ""} ${isToday ? "today-row" : ""} ${isPast ? "past-row" : ""}">${this._renderLabel(dayKey)}</div>
       ${daySlots.map((val, colIdx) => {
             const inDrag = this._isInDragRegion(rowIdx, colIdx);
-            const cellStyle = isColor ? this._colorCellStyle(val) : "";
+            const cellStyle = isPalette ? this._paletteCellStyle(val) : "";
             return html`
           <div
-            class="cell ${isColor ? (val ? "color-set" : "off") : (val ? "on" : "off")} ${weekEven && !val ? "week-even" : ""} ${isToday ? "today-row" : ""} ${isPast ? "past-row" : ""} ${inDrag ? "drag-preview" : ""} ${colIdx % 4 === 0 ? "hour-start" : ""}"
+            class="cell ${isPalette ? (val ? "color-set" : "off") : (val ? "on" : "off")} ${weekEven && !val ? "week-even" : ""} ${isToday ? "today-row" : ""} ${isPast ? "past-row" : ""} ${inDrag ? "drag-preview" : ""} ${colIdx % 4 === 0 ? "hour-start" : ""}"
             style=${cellStyle}
             data-row=${rowIdx}
             data-col=${colIdx}
             data-day=${dayKey}
-            title="${this._cellTooltip(colIdx)}"
+            title="${this._cellTooltip(colIdx, val)}"
             @mousedown=${(e: MouseEvent) => this._onMouseDown(e, rowIdx, colIdx, dayKey)}
             @mouseenter=${(e: MouseEvent) => this._onMouseEnter(e, rowIdx, colIdx)}
             @touchstart=${(e: TouchEvent) => this._onTouchStart(e, rowIdx, colIdx, dayKey)}
@@ -652,20 +660,67 @@ export class ScheduleGrid extends LitElement {
     `;
     }
 
-    private _cellTooltip(colIdx: number): string {
+    private _cellTooltip(colIdx: number, val: number = 0): string {
         const startH = Math.floor((colIdx * 15) / 60);
         const startM = (colIdx * 15) % 60;
         const endH = Math.floor(((colIdx + 1) * 15) / 60);
         const endM = ((colIdx + 1) * 15) % 60;
-        return `${String(startH).padStart(2, "0")}:${String(startM).padStart(2, "0")} – ${String(endH).padStart(2, "0")}:${String(endM).padStart(2, "0")}`;
+        const time = `${String(startH).padStart(2, "0")}:${String(startM).padStart(2, "0")} – ${String(endH).padStart(2, "0")}:${String(endM).padStart(2, "0")}`;
+        if (this.slotType === "hvac" && val > 0 && this.hvacPresets && val <= this.hvacPresets.length) {
+            const preset = this.hvacPresets[val - 1];
+            const lines = [time];
+            if (preset.alias) lines.push(preset.alias);
+            if (preset.temperature !== null) lines.push(`Temp: ${preset.temperature}°C`);
+            if (preset.hvac_mode) lines.push(`Mode: ${preset.hvac_mode}`);
+            if (preset.fan_mode) lines.push(`Fan: ${preset.fan_mode}`);
+            return lines.join("\n");
+        }
+        if (this.slotType === "color" && val > 0 && this.palette && val <= this.palette.length) {
+            const norm = normalizePaletteEntry(this.palette[val - 1]);
+            if (norm.mode === "cycle" && norm.alias) {
+                return `${time}\n${norm.alias}`;
+            }
+        }
+        return time;
     }
 
-    private _colorCellStyle(val: number): string {
-        if (val === 0 || !this.palette || val > this.palette.length) return "";
-        return `background: ${this.palette[val - 1]}`;
+    private _paletteCellStyle(val: number): string {
+        if (val === 0) return "";
+        if (this.slotType === "hvac") {
+            if (!this.hvacPresets || val > this.hvacPresets.length) return "";
+            return `background: ${this.hvacPresets[val - 1].color}`;
+        }
+        if (!this.palette || val > this.palette.length) return "";
+        const norm = normalizePaletteEntry(this.palette[val - 1]);
+        return `background: ${paletteEntryBackground(norm)}`;
     }
 
     private _renderPaletteBar() {
+        const isHvac = this.slotType === "hvac";
+        const swatches = isHvac
+            ? this.hvacPresets.map((p, i) => ({
+                color: p.color,
+                label: p.alias || this._hvacShortLabel(p),
+                tooltip: this._hvacSwatchTooltip(p),
+                icon: p.icon,
+                index: i + 1,
+            }))
+            : this.palette.map((entry, i) => {
+                const norm = normalizePaletteEntry(entry);
+                const badge = norm.mode === "crossfade" ? "⇢"
+                    : norm.mode === "cycle" ? "⟳"
+                        : norm.mode === "tv" ? "📺" : "";
+                const label = norm.mode === "cycle" && norm.alias
+                    ? norm.alias
+                    : `${norm.color} (${norm.mode})`;
+                return {
+                    color: paletteEntryBackground(norm),
+                    label,
+                    tooltip: norm.alias ? `${norm.alias}\n${norm.color} – ${norm.mode}` : `${norm.color} – ${norm.mode}`,
+                    icon: badge || undefined,
+                    index: i + 1,
+                };
+            });
         return html`
       <div class="palette-bar">
         <span>Paint:</span>
@@ -674,16 +729,33 @@ export class ScheduleGrid extends LitElement {
           title="Eraser"
           @click=${() => { this._activePaletteIndex = 0; }}
         >✕</div>
-        ${this.palette.map((color, i) => html`
+        ${swatches.map((s) => html`
           <div
-            class="palette-swatch ${this._activePaletteIndex === i + 1 ? "active" : ""}"
-            style="background: ${color}"
-            title="${color}"
-            @click=${() => { this._activePaletteIndex = i + 1; }}
-          ></div>
+            class="palette-swatch ${this._activePaletteIndex === s.index ? "active" : ""}"
+            style="background: ${s.color}"
+            title="${s.tooltip}"
+            @click=${() => { this._activePaletteIndex = s.index; }}
+          >${s.icon ? html`<mdi-icon .icon=${s.icon} style="--mdi-icon-size:16px"></mdi-icon>` : ""}</div>
         `)}
       </div>
     `;
+    }
+
+    private _hvacShortLabel(preset: HvacPreset): string {
+        const parts: string[] = [];
+        if (preset.temperature !== null) parts.push(`${preset.temperature}°`);
+        if (preset.hvac_mode) parts.push(preset.hvac_mode);
+        if (preset.fan_mode) parts.push(preset.fan_mode);
+        return parts.join(" | ") || "Preset";
+    }
+
+    private _hvacSwatchTooltip(preset: HvacPreset): string {
+        const lines: string[] = [];
+        if (preset.alias) lines.push(preset.alias);
+        if (preset.temperature !== null) lines.push(`Temp: ${preset.temperature}°C`);
+        if (preset.hvac_mode) lines.push(`Mode: ${preset.hvac_mode}`);
+        if (preset.fan_mode) lines.push(`Fan: ${preset.fan_mode}`);
+        return lines.join("\n");
     }
 
     private _renderTimeIndicator() {
@@ -724,7 +796,7 @@ export class ScheduleGrid extends LitElement {
         e.preventDefault();
         const daySlots = this.slots[dayKey] ?? new Array(SLOTS_PER_DAY).fill(0);
         const slotIdx = this._isMobile ? row * MOBILE_SLOTS_PER_ROW + col : col;
-        if (this.slotType === "color") {
+        if (this.slotType === "color" || this.slotType === "hvac") {
             this._dragValue = daySlots[slotIdx] === this._activePaletteIndex ? 0 : this._activePaletteIndex;
         } else {
             this._dragValue = daySlots[slotIdx] ? 0 : 1;
@@ -759,7 +831,7 @@ export class ScheduleGrid extends LitElement {
         e.preventDefault();
         const daySlots = this.slots[dayKey] ?? new Array(SLOTS_PER_DAY).fill(0);
         const slotIdx = this._isMobile ? row * MOBILE_SLOTS_PER_ROW + col : col;
-        if (this.slotType === "color") {
+        if (this.slotType === "color" || this.slotType === "hvac") {
             this._dragValue = daySlots[slotIdx] === this._activePaletteIndex ? 0 : this._activePaletteIndex;
         } else {
             this._dragValue = daySlots[slotIdx] ? 0 : 1;

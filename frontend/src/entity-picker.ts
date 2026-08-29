@@ -2,28 +2,39 @@ import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles } from "./styles";
 import type { HomeAssistant } from "./types";
+import "./mdi-icon";
 
-const SUPPORTED_DOMAINS = ["switch", "light", "fan", "input_boolean"];
+const SUPPORTED_DOMAINS = ["switch", "light", "fan", "input_boolean", "climate"];
 const COLOR_MODES = ["rgb", "rgbw", "rgbww", "hs", "xy"];
 
-const DOMAIN_ICONS: Record<string, string> = {
-    switch: "mdi:toggle-switch-variant",
-    light: "mdi:lightbulb",
-    fan: "mdi:fan",
-    cover: "mdi:window-shutter",
-    climate: "mdi:thermostat",
-    sensor: "mdi:eye",
-    binary_sensor: "mdi:checkbox-blank-circle",
-    input_boolean: "mdi:toggle-switch-variant-off",
-    automation: "mdi:robot",
-    script: "mdi:script-text",
-    scene: "mdi:palette",
-    media_player: "mdi:cast",
-    vacuum: "mdi:robot-vacuum",
-    lock: "mdi:lock",
-    humidifier: "mdi:air-humidifier",
-    water_heater: "mdi:thermometer",
+// SVG path data for entity domain icons (Material Design Icons)
+const DOMAIN_ICON_PATHS: Record<string, { on: string; off: string }> = {
+    switch: {
+        on: "M17 7H7a5 5 0 0 0-5 5 5 5 0 0 0 5 5h10a5 5 0 0 0 5-5 5 5 0 0 0-5-5m0 8a3 3 0 0 1-3-3 3 3 0 0 1 3-3 3 3 0 0 1 3 3 3 3 0 0 1-3 3Z",
+        off: "M17 7H7a5 5 0 0 0-5 5 5 5 0 0 0 5 5h10a5 5 0 0 0 5-5 5 5 0 0 0-5-5M7 15a3 3 0 0 1-3-3 3 3 0 0 1 3-3 3 3 0 0 1 3 3 3 3 0 0 1-3 3Z",
+    },
+    light: {
+        on: "M12 6a6 6 0 0 1 6 6c0 2.22-1.21 4.16-3 5.2V19a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1v-1.8c-1.79-1.04-3-2.98-3-5.2a6 6 0 0 1 6-6m2 15v1a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1v-1h4m-3-5h2l.5-4h-3l.5 4Z",
+        off: "M12 6a6 6 0 0 1 6 6c0 2.22-1.21 4.16-3 5.2V19a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1v-1.8c-1.79-1.04-3-2.98-3-5.2a6 6 0 0 1 6-6m2 15v1a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1v-1h4M12 8a4 4 0 0 0-4 4c0 1.54.83 2.87 2.07 3.6l.43.25V18h3v-2.15l.43-.25A4.02 4.02 0 0 0 16 12a4 4 0 0 0-4-4Z",
+    },
+    fan: {
+        on: "M12 11a1 1 0 0 1 1 1 1 1 0 0 1-1 1 1 1 0 0 1-1-1 1 1 0 0 1 1-1m4.22-.99c-.67.49-1.47.86-2.23 1.12.03.31-.02.63-.14.93 1.59 1.08 2.75 2.59 2.75 3.2 0 .43-.55.86-1.5 1.18-.96.32-2.2.5-3.5.56-.45-.6-1.07-1.08-1.74-1.42.03-.77.13-1.51.31-2.2-.52-.36-.9-.87-1.1-1.45A9.82 9.82 0 0 1 5 12.83c0-.72.53-1.35 1.42-1.82.89-.47 2.05-.77 3.34-.89.4.55.94.97 1.56 1.2.44-.66.97-1.26 1.59-1.77-.29-.47-.42-1.01-.39-1.55A9.73 9.73 0 0 1 12 4.29c.72 0 1.35.53 1.82 1.42.47.89.77 2.05.89 3.34a3.43 3.43 0 0 0-1.2 1.56c.65.43 1.24.96 1.75 1.58.48-.29 1.02-.43 1.56-.4.84.19 1.64.46 2.36.83.72.37 1.19.93 1.19 1.55 0 .72-.53 1.35-1.42 1.82-.89.47-2.05.77-3.34.89a3.43 3.43 0 0 0-1.2-1.56Z",
+        off: "M12 11a1 1 0 0 1 1 1 1 1 0 0 1-1 1 1 1 0 0 1-1-1 1 1 0 0 1 1-1m4.22-.99c-.67.49-1.47.86-2.23 1.12.03.31-.02.63-.14.93 1.59 1.08 2.75 2.59 2.75 3.2 0 .43-.55.86-1.5 1.18-.96.32-2.2.5-3.5.56-.45-.6-1.07-1.08-1.74-1.42.03-.77.13-1.51.31-2.2-.52-.36-.9-.87-1.1-1.45A9.82 9.82 0 0 1 5 12.83c0-.72.53-1.35 1.42-1.82.89-.47 2.05-.77 3.34-.89.4.55.94.97 1.56 1.2.44-.66.97-1.26 1.59-1.77-.29-.47-.42-1.01-.39-1.55A9.73 9.73 0 0 1 12 4.29c.72 0 1.35.53 1.82 1.42.47.89.77 2.05.89 3.34a3.43 3.43 0 0 0-1.2 1.56c.65.43 1.24.96 1.75 1.58.48-.29 1.02-.43 1.56-.4.84.19 1.64.46 2.36.83.72.37 1.19.93 1.19 1.55 0 .72-.53 1.35-1.42 1.82-.89.47-2.05.77-3.34.89a3.43 3.43 0 0 0-1.2-1.56Z",
+    },
+    cover: {
+        on: "M3 4h18v2H3V4m0 14h18v2H3v-2m0-7h18v2H3v-2m0 3.5h18v1H3v-1m0-7h18v1H3v-1Z",
+        off: "M3 4h18v2H3V4m0 14h18v2H3v-2Z",
+    },
+    climate: {
+        on: "M15 13V5a3 3 0 0 0-6 0v8a5 5 0 1 0 6 0m-3-8a1 1 0 0 1 1 1v3h-2V6a1 1 0 0 1 1-1Z",
+        off: "M15 13V5a3 3 0 0 0-6 0v8a5 5 0 1 0 6 0m-3-8a1 1 0 0 1 1 1v3h-2V6a1 1 0 0 1 1-1Z",
+    },
+    input_boolean: {
+        on: "M17 7H7a5 5 0 0 0-5 5 5 5 0 0 0 5 5h10a5 5 0 0 0 5-5 5 5 0 0 0-5-5m0 8a3 3 0 0 1-3-3 3 3 0 0 1 3-3 3 3 0 0 1 3 3 3 3 0 0 1-3 3Z",
+        off: "M17 7H7a5 5 0 0 0-5 5 5 5 0 0 0 5 5h10a5 5 0 0 0 5-5 5 5 0 0 0-5-5M7 15a3 3 0 0 1-3-3 3 3 0 0 1 3-3 3 3 0 0 1 3 3 3 3 0 0 1-3 3Z",
+    },
 };
+const DEFAULT_ICON_PATH = "M20.5 11H19V7c0-1.1-.9-2-2-2h-4V3.5a2.5 2.5 0 0 0-5 0V5H4c-1.1 0-2 .9-2 2v3.8h1.5c1.4 0 2.5 1.1 2.5 2.5S4.9 15.8 3.5 15.8H2V19c0 1.1.9 2 2 2h3.8v-1.5c0-1.4 1.1-2.5 2.5-2.5s2.5 1.1 2.5 2.5V21H17c1.1 0 2-.9 2-2v-4h1.5a2.5 2.5 0 0 0 0-5Z";
 
 @customElement("entity-picker")
 export class EntityPicker extends LitElement {
@@ -73,6 +84,22 @@ export class EntityPicker extends LitElement {
         border-color: var(--error-color, #db4437);
         opacity: 0.8;
       }
+      .entity-row.incompatible {
+        background: color-mix(in srgb, var(--warning-color, #ff9800) 10%, transparent);
+        border-color: var(--warning-color, #ff9800);
+        opacity: 0.85;
+      }
+      .incompatible-badge {
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        color: var(--warning-color, #ff9800);
+        background: color-mix(in srgb, var(--warning-color, #ff9800) 15%, transparent);
+        padding: 1px 6px;
+        border-radius: 4px;
+        white-space: nowrap;
+        flex-shrink: 0;
+      }
       .unavailable-badge {
         font-size: 10px;
         font-weight: 700;
@@ -94,9 +121,19 @@ export class EntityPicker extends LitElement {
         align-items: center;
         gap: 6px;
       }
-      .entity-name ha-icon {
+      .entity-name .entity-icon {
         flex-shrink: 0;
-        --mdc-icon-size: 18px;
+        width: 18px;
+        height: 18px;
+      }
+      .entity-name .entity-icon.state-on {
+        fill: var(--primary-color, #03a9f4);
+      }
+      .entity-name .entity-icon.state-off {
+        fill: var(--secondary-text-color, #727272);
+      }
+      .entity-name .entity-icon.state-unavailable {
+        fill: var(--error-color, #db4437);
       }
       .entity-id {
         font-size: 11px;
@@ -202,20 +239,39 @@ export class EntityPicker extends LitElement {
     `,
     ];
 
+    private _isEntityCompatible(id: string): boolean {
+        const domain = id.split(".")[0];
+        if (this.slotType === "color") {
+            if (domain !== "light") return false;
+            const modes = this.hass?.states?.[id]?.attributes?.supported_color_modes;
+            return Array.isArray(modes) && modes.some((m: string) => COLOR_MODES.includes(m));
+        }
+        if (this.slotType === "hvac") {
+            return domain === "climate";
+        }
+        return SUPPORTED_DOMAINS.includes(domain);
+    }
+
+    private _incompatibleReason(id: string): string {
+        const domain = id.split(".")[0];
+        const domainLabel = domain.replace("_", " ");
+        if (this.slotType === "color") {
+            if (domain !== "light") return `${domainLabel} does not support colour`;
+            return "light does not support colour modes";
+        }
+        if (this.slotType === "hvac") {
+            return `${domainLabel} does not support HVAC states`;
+        }
+        return "incompatible";
+    }
+
     private get _availableEntities(): { id: string; name: string }[] {
         if (!this.hass?.states) return [];
         const selected = new Set(this.selectedIds);
-        const isColor = this.slotType === "color";
         return Object.keys(this.hass.states)
             .filter((id) => {
                 if (selected.has(id)) return false;
-                const domain = id.split(".")[0];
-                if (isColor) {
-                    if (domain !== "light") return false;
-                    const modes = this.hass.states[id]?.attributes?.supported_color_modes;
-                    return Array.isArray(modes) && modes.some((m: string) => COLOR_MODES.includes(m));
-                }
-                return SUPPORTED_DOMAINS.includes(domain);
+                return this._isEntityCompatible(id);
             })
             .map((id) => ({
                 id,
@@ -256,9 +312,12 @@ export class EntityPicker extends LitElement {
         const scheduled = this.scheduledStates[id];
         const currentState = this.hass?.states?.[id]?.state === "on" ? "on" : "off";
         const isUnavailable = this.unavailableEntities.includes(id);
+        const isIncompatible = !isUnavailable && !this._isEntityCompatible(id);
         let rowClass = "";
         if (isUnavailable) {
             rowClass = "unavailable";
+        } else if (isIncompatible) {
+            rowClass = "incompatible";
         } else if (this.showOverrides && override) {
             rowClass = override === scheduled ? "override-match" : "override-conflict";
         }
@@ -273,11 +332,12 @@ export class EntityPicker extends LitElement {
         return html`
       <div class="entity-row ${rowClass}">
         <span class="entity-name">
-          <ha-icon .icon=${this._entityIcon(id)}></ha-icon>
+          ${this._renderEntityIcon(id)}
           ${this._friendlyName(id)}
           <span class="entity-id">${id}</span>
         </span>
         ${isUnavailable ? html`<span class="unavailable-badge">unavailable</span>` : nothing}
+        ${isIncompatible ? html`<span class="incompatible-badge" title=${this._incompatibleReason(id)}>${this._incompatibleReason(id)}</span>` : nothing}
         ${this.showOverrides && this.slotType !== "color" ? html`
           <span class="override-controls">
             <button
@@ -321,9 +381,26 @@ export class EntityPicker extends LitElement {
     }
 
     private _entityIcon(id: string): string {
-        return this.hass?.states?.[id]?.attributes?.icon
-            ?? DOMAIN_ICONS[id.split(".")[0]]
-            ?? "mdi:puzzle";
+        const domain = id.split(".")[0];
+        const entityState = this.hass?.states?.[id];
+        const customIcon = entityState?.attributes?.icon;
+        if (customIcon) return customIcon;
+        const isOn = entityState?.state === "on";
+        const paths = DOMAIN_ICON_PATHS[domain];
+        return paths ? (isOn ? paths.on : paths.off) : DEFAULT_ICON_PATH;
+    }
+
+    private _renderEntityIcon(id: string) {
+        const entityState = this.hass?.states?.[id];
+        const customIcon = entityState?.attributes?.icon;
+        if (customIcon) {
+            return html`<mdi-icon class="entity-icon" .icon=${customIcon} style="--mdi-icon-size: 18px"></mdi-icon>`;
+        }
+        const state = entityState?.state;
+        const stateClass = state === "unavailable" || state === "unknown" ? "state-unavailable"
+            : state === "on" ? "state-on" : "state-off";
+        const path = this._entityIcon(id);
+        return html`<svg class="entity-icon ${stateClass}" viewBox="0 0 24 24"><path d=${path}/></svg>`;
     }
 
     private _onInput(e: InputEvent) {

@@ -1,7 +1,7 @@
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles } from "./styles";
-import type { Schedule, ScheduleSummary, HomeAssistant } from "./types";
+import type { Schedule, ScheduleSummary, HomeAssistant, HvacPreset, PaletteEntry } from "./types";
 import "./schedule-list";
 import "./schedule-editor";
 
@@ -16,6 +16,8 @@ export class OnCuePanel extends LitElement {
     @state() private _isNew = false;
     @state() private _loading = true;
     @state() private _sidebarOpen = true;
+    @state() private _hvacPresets: HvacPreset[] = [];
+    @state() private _colorPresets: PaletteEntry[] = [];
 
     static styles = [
         sharedStyles,
@@ -90,6 +92,8 @@ export class OnCuePanel extends LitElement {
     connectedCallback() {
         super.connectedCallback();
         this._loadSchedules();
+        this._loadHvacPresets();
+        this._loadColorPresets();
     }
 
     render() {
@@ -113,9 +117,13 @@ export class OnCuePanel extends LitElement {
             .hass=${this.hass}
             .schedule=${this._selectedSchedule}
             .isNew=${this._isNew}
+            .globalHvacPresets=${this._hvacPresets}
+            .globalColorPresets=${this._colorPresets}
             @schedule-saved=${this._onScheduleSaved}
             @schedule-deleted=${this._onScheduleDeleted}
             @editor-cancel=${this._onEditorCancel}
+            @hvac-presets-changed=${this._onHvacPresetsChanged}
+            @color-presets-changed=${this._onColorPresetsChanged}
           ></schedule-editor>
         </div>
       </div>
@@ -143,6 +151,30 @@ export class OnCuePanel extends LitElement {
         }
     }
 
+    private async _loadHvacPresets() {
+        try {
+            const result = await this.hass.connection.sendMessagePromise({
+                type: "oncue_scheduler/get_hvac_presets",
+            });
+            this._hvacPresets = result.hvac_presets ?? [];
+        } catch (err) {
+            console.error("Failed to load HVAC presets:", err);
+            this._hvacPresets = [];
+        }
+    }
+
+    private async _loadColorPresets() {
+        try {
+            const result = await this.hass.connection.sendMessagePromise({
+                type: "oncue_scheduler/get_color_presets",
+            });
+            this._colorPresets = result.color_presets ?? [];
+        } catch (err) {
+            console.error("Failed to load color presets:", err);
+            this._colorPresets = [];
+        }
+    }
+
     private async _onScheduleSelected(e: CustomEvent) {
         const id = e.detail.id;
         try {
@@ -166,6 +198,8 @@ export class OnCuePanel extends LitElement {
 
     private async _onScheduleSaved(e: CustomEvent) {
         await this._loadSchedules();
+        await this._loadHvacPresets();
+        await this._loadColorPresets();
         // Select the saved schedule
         const id = e.detail?.id;
         if (id) {
@@ -220,5 +254,13 @@ export class OnCuePanel extends LitElement {
         } catch (err) {
             console.error("Failed to toggle schedule active state:", err);
         }
+    }
+
+    private async _onHvacPresetsChanged() {
+        await this._loadHvacPresets();
+    }
+
+    private async _onColorPresetsChanged() {
+        await this._loadColorPresets();
     }
 }
