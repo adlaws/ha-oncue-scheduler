@@ -20,9 +20,10 @@ from .const import (
     CADENCE_WEEKLY,
     EVENT_OVERRIDES_CHANGED,
     SIGNAL_SCHEDULES_UPDATED,
+    SLOT_TYPE_COLOR,
     SLOT_TYPE_ON_OFF,
 )
-from .slot_values import interpret_slot_value
+from .slot_values import compute_animated_color, interpret_slot_value, normalize_palette_entry
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -83,6 +84,10 @@ class ScheduleCoordinator:
         self._applying: set[str] = set()
         # Entities that are currently unavailable/unknown
         self._unavailable: set[str] = set()
+        # Sub-slot timer for animated colour modes (~5s interval)
+        self._unsub_anim: CALLBACK_TYPE | None = None
+        # Last-sent animated colour per entity to avoid redundant calls
+        self._last_anim_color: dict[str, list[int]] = {}
 
     async def async_start(self) -> None:
         self._unsub_time = async_track_utc_time_change(
@@ -97,6 +102,7 @@ class ScheduleCoordinator:
             self._async_on_schedules_updated,
         )
         self._refresh_state_listeners()
+        self._refresh_animation_timer()
         # Evaluate immediately on startup
         await self._async_evaluate()
 
@@ -111,15 +117,20 @@ class ScheduleCoordinator:
         if self._unsub_state:
             self._unsub_state()
             self._unsub_state = None
+        if self._unsub_anim:
+            self._unsub_anim()
+            self._unsub_anim = None
         for cancel in self._revert_timers.values():
             cancel()
         self._revert_timers.clear()
+        self._last_anim_color.clear()
 
     async def _async_on_tick(self, now: datetime) -> None:
         await self._async_evaluate()
 
     async def _async_on_schedules_updated(self) -> None:
         self._refresh_state_listeners()
+        self._refresh_animation_timer()
         await self._async_evaluate()
 
     async def _async_evaluate(self) -> None:
@@ -187,8 +198,9 @@ class ScheduleCoordinator:
 
         self._unavailable.discard(entity_id)
 
-        palette = schedule.get("palette") if schedule else None
-        result = interpret_slot_value(desired, slot_type, palette)
+        palette = self._store.color_presets or None
+        hvac_presets = self._store.hvac_presets or None
+        result = interpret_slot_value(desired, slot_type, palette, hvac_presets)
         action = result["action"]
 
         if action == "none":
@@ -207,6 +219,46 @@ class ScheduleCoordinator:
             except Exception:
                 _LOGGER.warning(
                     "Failed to set color on '%s'", entity_id,
+                    exc_info=True,
+                )
+            finally:
+                self._applying.discard(entity_id)
+            return
+
+        if action == "set_hvac":
+            service_data: dict[str, Any] = {"entity_id": entity_id}
+            if "hvac_mode" in result:
+                service_data["hvac_mode"] = result["hvac_mode"]
+            if "temperature" in result:
+                service_data["temperature"] = result["temperature"]
+            if "fan_mode" in result:
+                service_data["fan_mode"] = result["fan_mode"]
+            self._applying.add(entity_id)
+            try:
+                if "hvac_mode" in result:
+                    await self._hass.services.async_call(
+                        "climate",
+                        "set_hvac_mode",
+                        {"entity_id": entity_id, "hvac_mode": result["hvac_mode"]},
+                        blocking=True,
+                    )
+                if "temperature" in result:
+                    await self._hass.services.async_call(
+                        "climate",
+                        "set_temperature",
+                        {"entity_id": entity_id, "temperature": result["temperature"]},
+                        blocking=True,
+                    )
+                if "fan_mode" in result:
+                    await self._hass.services.async_call(
+                        "climate",
+                        "set_fan_mode",
+                        {"entity_id": entity_id, "fan_mode": result["fan_mode"]},
+                        blocking=True,
+                    )
+            except Exception:
+                _LOGGER.warning(
+                    "Failed to set HVAC on '%s'", entity_id,
                     exc_info=True,
                 )
             finally:
@@ -287,13 +339,14 @@ class ScheduleCoordinator:
 
         slot_type = schedule.get("slot_type", SLOT_TYPE_ON_OFF)
         desired = day_slots[slot_index]
-        palette = schedule.get("palette")
-        result = interpret_slot_value(desired, slot_type, palette)
+        palette = self._store.color_presets or None
+        hvac_presets = self._store.hvac_presets or None
+        result = interpret_slot_value(desired, slot_type, palette, hvac_presets)
         action = result["action"]
         if action == "none":
             scheduled_state = "off"
         else:
-            scheduled_state = "on" if action == "turn_on" else "off"
+            scheduled_state = "on" if action in ("turn_on", "set_color", "set_hvac") else "off"
 
         return {eid: scheduled_state for eid in schedule.get("entity_ids", [])}
 
@@ -421,12 +474,13 @@ class ScheduleCoordinator:
             return None
 
         slot_type = schedule.get("slot_type", SLOT_TYPE_ON_OFF)
-        palette = schedule.get("palette")
-        result = interpret_slot_value(day_slots[slot_index], slot_type, palette)
+        palette = self._store.color_presets or None
+        hvac_presets = self._store.hvac_presets or None
+        result = interpret_slot_value(day_slots[slot_index], slot_type, palette, hvac_presets)
         action = result["action"]
         if action == "none":
             return "off"
-        return "on" if action == "turn_on" else "off"
+        return "on" if action in ("turn_on", "set_color", "set_hvac") else "off"
 
     def _schedule_revert(
         self, entity_id: str, desired: str, delay: int
@@ -449,3 +503,128 @@ class ScheduleCoordinator:
         cancel = self._revert_timers.pop(entity_id, None)
         if cancel:
             cancel()
+
+    # ── Animated colour support ──
+
+    def _has_animated_palette_entries(self) -> bool:
+        """Check if any active colour schedule uses animated palette modes."""
+        has_color_schedule = any(
+            s.get("active") and s.get("slot_type") == SLOT_TYPE_COLOR
+            for s in self._store.schedules.values()
+        )
+        if not has_color_schedule:
+            return False
+        palette = self._store.color_presets
+        if not palette:
+            return False
+        for entry in palette:
+            if isinstance(entry, dict) and entry.get("mode", "solid") != "solid":
+                return True
+        return False
+
+    @callback
+    def _refresh_animation_timer(self) -> None:
+        """Start or stop the sub-slot animation timer as needed."""
+        needs_anim = self._has_animated_palette_entries()
+        if needs_anim and self._unsub_anim is None:
+            self._unsub_anim = async_track_utc_time_change(
+                self._hass,
+                self._async_on_anim_tick,
+                second=list(range(0, 60, 5)),  # every 5 seconds
+            )
+        elif not needs_anim and self._unsub_anim is not None:
+            self._unsub_anim()
+            self._unsub_anim = None
+            self._last_anim_color.clear()
+
+    async def _async_on_anim_tick(self, now: datetime) -> None:
+        """Evaluate animated colour slots every ~5 seconds."""
+        local_now = dt_util.now()
+        local_date = local_now.date()
+        palette = self._store.color_presets
+        if not palette:
+            return
+
+        for schedule in list(self._store.schedules.values()):
+            if not schedule.get("active"):
+                continue
+            if schedule.get("slot_type") != SLOT_TYPE_COLOR:
+                continue
+
+            slot_minutes = schedule.get("slot_minutes", 15)
+            slot_index = compute_slot_index(local_now, slot_minutes)
+            day_key = compute_day_key(schedule, local_date)
+            if day_key is None:
+                continue
+
+            day_slots = schedule.get("slots", {}).get(day_key)
+            if not day_slots or slot_index >= len(day_slots):
+                continue
+
+            value = day_slots[slot_index]
+            if value == 0 or value > len(palette):
+                continue
+
+            entry = palette[value - 1]
+            norm = normalize_palette_entry(entry)
+            mode = norm.get("mode", "solid")
+            if mode == "solid":
+                continue
+
+            # Compute elapsed seconds within the current slot
+            slot_start_minutes = slot_index * slot_minutes
+            elapsed = (local_now.hour * 60 + local_now.minute - slot_start_minutes) * 60 + local_now.second
+            slot_seconds = slot_minutes * 60
+
+            result = interpret_slot_value(value, SLOT_TYPE_COLOR, palette)
+            if result.get("action") != "set_color":
+                continue
+
+            # For crossfade, resolve the next slot's colour
+            next_rgb = None
+            if mode == "crossfade":
+                next_idx = slot_index + 1
+                if next_idx < len(day_slots):
+                    next_val = day_slots[next_idx]
+                    if next_val > 0 and next_val <= len(palette):
+                        next_entry = normalize_palette_entry(palette[next_val - 1])
+                        from .slot_values import hex_to_rgb
+                        next_rgb = list(hex_to_rgb(next_entry["color"]))
+
+            rgb = compute_animated_color(
+                color_mode=result.get("color_mode", mode),
+                elapsed_seconds=elapsed,
+                slot_seconds=slot_seconds,
+                current_rgb=result["rgb_color"],
+                next_rgb=next_rgb,
+                cycle_colors=result.get("cycle_colors"),
+                cycle_transition=result.get("cycle_transition", "snap"),
+                cycle_rate=result.get("cycle_rate", 1.0),
+                tv_colors=result.get("tv_colors"),
+            )
+
+            for entity_id in schedule.get("entity_ids", []):
+                override = self._overrides.get(schedule["id"], {}).get(entity_id)
+                if override is not None:
+                    continue
+                if entity_id in self._unavailable:
+                    continue
+                # Skip if colour hasn't changed
+                if self._last_anim_color.get(entity_id) == rgb:
+                    continue
+                self._last_anim_color[entity_id] = rgb
+                self._applying.add(entity_id)
+                try:
+                    await self._hass.services.async_call(
+                        "light",
+                        "turn_on",
+                        {"entity_id": entity_id, "rgb_color": rgb},
+                        blocking=True,
+                    )
+                except Exception:
+                    _LOGGER.warning(
+                        "Failed to set animated color on '%s'", entity_id,
+                        exc_info=True,
+                    )
+                finally:
+                    self._applying.discard(entity_id)

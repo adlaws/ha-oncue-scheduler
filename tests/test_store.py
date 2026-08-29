@@ -355,41 +355,244 @@ async def test_validation_rejects_invalid_slot_values(store):
 
 
 @pytest.mark.asyncio
-async def test_save_color_schedule_with_palette(store):
+async def test_save_color_schedule_with_global_presets(store):
+    presets = ["#ff0000", "#00ff00", "#0000ff"]
+    await store.async_save_color_presets(presets)
     data = {
         "name": "Color Schedule",
         "entity_ids": ["light.test"],
         "cadence": "daily",
         "slot_type": "color",
-        "palette": ["#ff0000", "#00ff00", "#0000ff"],
     }
     result = await store.async_save_schedule(data)
     assert result["slot_type"] == "color"
-    assert result["palette"] == ["#ff0000", "#00ff00", "#0000ff"]
+    assert "palette" not in result  # presets are global, not per-schedule
+    assert len(store.color_presets) == 3
 
 
 @pytest.mark.asyncio
-async def test_color_schedule_rejects_missing_palette(store):
+async def test_color_schedule_rejects_when_no_global_presets(store):
     data = {
-        "name": "No Palette",
+        "name": "No Presets",
         "entity_ids": ["light.test"],
         "cadence": "daily",
         "slot_type": "color",
     }
-    with pytest.raises(ValueError, match="palette"):
+    with pytest.raises(ValueError, match="no color presets defined"):
         await store.async_save_schedule(data)
 
 
 @pytest.mark.asyncio
 async def test_color_schedule_accepts_palette_index_slots(store):
+    await store.async_save_color_presets(["#ff0000", "#00ff00"])
     data = {
         "name": "Color Slots",
         "entity_ids": ["light.test"],
         "cadence": "daily",
         "slot_type": "color",
-        "palette": ["#ff0000", "#00ff00"],
         "slots": {"0": [0, 1, 2, 0] * 24},
     }
     result = await store.async_save_schedule(data)
     assert result["slots"]["0"][1] == 1
     assert result["slots"]["0"][2] == 2
+
+
+@pytest.mark.asyncio
+async def test_save_color_presets_rejects_invalid(store):
+    with pytest.raises(ValueError, match="hex color"):
+        await store.async_save_color_presets(["not-a-color"])
+
+
+@pytest.mark.asyncio
+async def test_color_preset_usage(store):
+    await store.async_save_color_presets(["#ff0000", "#00ff00"])
+    await store.async_save_schedule({
+        "name": "Schedule A",
+        "entity_ids": ["light.a"],
+        "cadence": "daily",
+        "slot_type": "color",
+        "slots": {"0": [1, 0] * 48},
+    })
+    await store.async_save_schedule({
+        "name": "Schedule B",
+        "entity_ids": ["light.b"],
+        "cadence": "daily",
+        "slot_type": "color",
+        "slots": {"0": [0, 2] * 48},
+    })
+    usage_0 = store.color_preset_usage(0)
+    assert len(usage_0) == 1
+    assert usage_0[0]["name"] == "Schedule A"
+    usage_1 = store.color_preset_usage(1)
+    assert len(usage_1) == 1
+    assert usage_1[0]["name"] == "Schedule B"
+
+
+@pytest.mark.asyncio
+async def test_delete_color_preset_remaps_all_schedules(store):
+    await store.async_save_color_presets(["#aaaaaa", "#bbbbbb", "#cccccc"])
+    s1 = await store.async_save_schedule({
+        "name": "Remap Test",
+        "entity_ids": ["light.x"],
+        "cadence": "daily",
+        "slot_type": "color",
+        "slots": {"0": [1, 2, 3, 0] * 24},
+    })
+    # Delete preset at index 0 (value 1)
+    await store.async_delete_color_preset(0)
+    assert len(store.color_presets) == 2
+    updated = store.async_get_schedule(s1["id"])
+    # value 1 -> 0 (cleared), value 2 -> 1, value 3 -> 2, value 0 -> 0
+    assert updated["slots"]["0"][:4] == [0, 1, 2, 0]
+
+
+@pytest.mark.asyncio
+async def test_color_presets_shared_across_schedules(store):
+    await store.async_save_color_presets(["#ff0000"])
+    await store.async_save_schedule({
+        "name": "First",
+        "entity_ids": ["light.a"],
+        "cadence": "daily",
+        "slot_type": "color",
+        "slots": {"0": [1, 0] * 48},
+    })
+    # Second schedule uses the same global presets — no need to re-define
+    s2 = await store.async_save_schedule({
+        "name": "Second",
+        "entity_ids": ["light.b"],
+        "cadence": "daily",
+        "slot_type": "color",
+        "slots": {"0": [0, 1] * 48},
+    })
+    assert s2["slot_type"] == "color"
+
+
+# HVAC slot type store tests
+
+@pytest.mark.asyncio
+async def test_save_hvac_schedule_with_global_presets(store):
+    presets = [
+        {"temperature": 22, "hvac_mode": "cool", "fan_mode": "auto", "color": "#4fc3f7"},
+        {"temperature": 18, "hvac_mode": "heat", "fan_mode": "low", "color": "#ff8a65"},
+    ]
+    await store.async_save_hvac_presets(presets)
+    data = {
+        "name": "HVAC Schedule",
+        "entity_ids": ["climate.test"],
+        "cadence": "daily",
+        "slot_type": "hvac",
+    }
+    result = await store.async_save_schedule(data)
+    assert result["slot_type"] == "hvac"
+    assert "hvac_presets" not in result  # presets are global, not per-schedule
+    assert len(store.hvac_presets) == 2
+
+
+@pytest.mark.asyncio
+async def test_hvac_schedule_rejects_when_no_global_presets(store):
+    data = {
+        "name": "No Presets",
+        "entity_ids": ["climate.test"],
+        "cadence": "daily",
+        "slot_type": "hvac",
+    }
+    with pytest.raises(ValueError, match="no HVAC presets defined"):
+        await store.async_save_schedule(data)
+
+
+@pytest.mark.asyncio
+async def test_save_hvac_presets_rejects_invalid(store):
+    with pytest.raises(ValueError, match="hvac_mode"):
+        await store.async_save_hvac_presets(
+            [{"temperature": 22, "hvac_mode": "turbo", "fan_mode": "auto", "color": "#4fc3f7"}]
+        )
+
+
+@pytest.mark.asyncio
+async def test_hvac_schedule_accepts_preset_index_slots(store):
+    await store.async_save_hvac_presets([
+        {"temperature": 22, "hvac_mode": "cool", "fan_mode": "auto", "color": "#4fc3f7"},
+    ])
+    data = {
+        "name": "HVAC Slots",
+        "entity_ids": ["climate.test"],
+        "cadence": "daily",
+        "slot_type": "hvac",
+        "slots": {"0": [0, 1, 0, 1] * 24},
+    }
+    result = await store.async_save_schedule(data)
+    assert result["slots"]["0"][1] == 1
+
+
+@pytest.mark.asyncio
+async def test_hvac_preset_usage(store):
+    await store.async_save_hvac_presets([
+        {"temperature": 22, "hvac_mode": "cool", "fan_mode": "auto", "color": "#4fc3f7"},
+        {"temperature": 18, "hvac_mode": "heat", "fan_mode": "low", "color": "#ff8a65"},
+    ])
+    s1 = await store.async_save_schedule({
+        "name": "Schedule A",
+        "entity_ids": ["climate.a"],
+        "cadence": "daily",
+        "slot_type": "hvac",
+        "slots": {"0": [1, 0] * 48},
+    })
+    s2 = await store.async_save_schedule({
+        "name": "Schedule B",
+        "entity_ids": ["climate.b"],
+        "cadence": "daily",
+        "slot_type": "hvac",
+        "slots": {"0": [0, 2] * 48},
+    })
+    usage_0 = store.hvac_preset_usage(0)
+    assert len(usage_0) == 1
+    assert usage_0[0]["name"] == "Schedule A"
+    usage_1 = store.hvac_preset_usage(1)
+    assert len(usage_1) == 1
+    assert usage_1[0]["name"] == "Schedule B"
+
+
+@pytest.mark.asyncio
+async def test_delete_hvac_preset_remaps_all_schedules(store):
+    await store.async_save_hvac_presets([
+        {"temperature": 20, "hvac_mode": "cool", "fan_mode": "auto", "color": "#aaaaaa"},
+        {"temperature": 22, "hvac_mode": "heat", "fan_mode": "auto", "color": "#bbbbbb"},
+        {"temperature": 24, "hvac_mode": "auto", "fan_mode": "high", "color": "#cccccc"},
+    ])
+    s1 = await store.async_save_schedule({
+        "name": "Remap Test",
+        "entity_ids": ["climate.x"],
+        "cadence": "daily",
+        "slot_type": "hvac",
+        "slots": {"0": [1, 2, 3, 0] * 24},
+    })
+    # Delete preset at index 0 (value 1)
+    await store.async_delete_hvac_preset(0)
+    assert len(store.hvac_presets) == 2
+    updated = store.async_get_schedule(s1["id"])
+    # value 1 -> 0 (cleared), value 2 -> 1, value 3 -> 2, value 0 -> 0
+    assert updated["slots"]["0"][:4] == [0, 1, 2, 0]
+
+
+@pytest.mark.asyncio
+async def test_hvac_presets_shared_across_schedules(store):
+    await store.async_save_hvac_presets([
+        {"temperature": 22, "hvac_mode": "cool", "fan_mode": "auto", "color": "#4fc3f7"},
+    ])
+    await store.async_save_schedule({
+        "name": "First",
+        "entity_ids": ["climate.a"],
+        "cadence": "daily",
+        "slot_type": "hvac",
+        "slots": {"0": [1, 0] * 48},
+    })
+    # Second schedule uses the same global presets — no need to re-define
+    s2 = await store.async_save_schedule({
+        "name": "Second",
+        "entity_ids": ["climate.b"],
+        "cadence": "daily",
+        "slot_type": "hvac",
+        "slots": {"0": [0, 1] * 48},
+    })
+    assert s2["slot_type"] == "hvac"
+    assert s2["slots"]["0"][1] == 1

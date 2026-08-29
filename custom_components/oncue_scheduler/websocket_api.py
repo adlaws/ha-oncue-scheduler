@@ -126,6 +126,14 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_set_override)
     websocket_api.async_register_command(hass, ws_clear_override)
     websocket_api.async_register_command(hass, ws_get_overrides)
+    websocket_api.async_register_command(hass, ws_get_hvac_presets)
+    websocket_api.async_register_command(hass, ws_save_hvac_presets)
+    websocket_api.async_register_command(hass, ws_delete_hvac_preset)
+    websocket_api.async_register_command(hass, ws_hvac_preset_usage)
+    websocket_api.async_register_command(hass, ws_get_color_presets)
+    websocket_api.async_register_command(hass, ws_save_color_presets)
+    websocket_api.async_register_command(hass, ws_delete_color_preset)
+    websocket_api.async_register_command(hass, ws_color_preset_usage)
 
 
 @websocket_api.websocket_command(
@@ -334,3 +342,187 @@ def _get_entry_id(hass: HomeAssistant) -> str | None:
     for entry_id in domain_data:
         return entry_id
     return None
+
+
+# ── Global HVAC presets ──
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "oncue_scheduler/get_hvac_presets",
+    }
+)
+@callback
+def ws_get_hvac_presets(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    entry_id = _get_entry_id(hass)
+    if entry_id is None:
+        connection.send_error(msg["id"], "not_found", "Integration not configured")
+        return
+    store = hass.data[DOMAIN][entry_id].store
+    connection.send_result(msg["id"], {"hvac_presets": store.hvac_presets})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "oncue_scheduler/save_hvac_presets",
+        vol.Required("hvac_presets"): list,
+    }
+)
+@websocket_api.async_response
+async def ws_save_hvac_presets(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    entry_id = _get_entry_id(hass)
+    if entry_id is None:
+        connection.send_error(msg["id"], "not_found", "Integration not configured")
+        return
+    store = hass.data[DOMAIN][entry_id].store
+    try:
+        saved = await store.async_save_hvac_presets(msg["hvac_presets"])
+    except ValueError as err:
+        connection.send_error(msg["id"], "invalid_format", str(err))
+        return
+    connection.send_result(msg["id"], {"hvac_presets": saved})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "oncue_scheduler/delete_hvac_preset",
+        vol.Required("index"): int,
+    }
+)
+@websocket_api.async_response
+async def ws_delete_hvac_preset(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    entry_id = _get_entry_id(hass)
+    if entry_id is None:
+        connection.send_error(msg["id"], "not_found", "Integration not configured")
+        return
+    store = hass.data[DOMAIN][entry_id].store
+    try:
+        presets = await store.async_delete_hvac_preset(msg["index"])
+    except ValueError as err:
+        connection.send_error(msg["id"], "invalid_format", str(err))
+        return
+    connection.send_result(msg["id"], {"hvac_presets": presets})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "oncue_scheduler/hvac_preset_usage",
+        vol.Required("index"): int,
+    }
+)
+@callback
+def ws_hvac_preset_usage(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    entry_id = _get_entry_id(hass)
+    if entry_id is None:
+        connection.send_error(msg["id"], "not_found", "Integration not configured")
+        return
+    store = hass.data[DOMAIN][entry_id].store
+    connection.send_result(msg["id"], {"schedules": store.hvac_preset_usage(msg["index"])})
+
+
+# ── Global color presets ──
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "oncue_scheduler/get_color_presets",
+    }
+)
+@callback
+def ws_get_color_presets(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    entry_id = _get_entry_id(hass)
+    if entry_id is None:
+        connection.send_error(msg["id"], "not_found", "Integration not configured")
+        return
+    store = hass.data[DOMAIN][entry_id].store
+    connection.send_result(msg["id"], {"color_presets": store.color_presets})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "oncue_scheduler/save_color_presets",
+        vol.Required("color_presets"): list,
+    }
+)
+@websocket_api.async_response
+async def ws_save_color_presets(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    entry_id = _get_entry_id(hass)
+    if entry_id is None:
+        connection.send_error(msg["id"], "not_found", "Integration not configured")
+        return
+    store = hass.data[DOMAIN][entry_id].store
+    try:
+        saved = await store.async_save_color_presets(msg["color_presets"])
+    except ValueError as err:
+        connection.send_error(msg["id"], "invalid_format", str(err))
+        return
+    connection.send_result(msg["id"], {"color_presets": saved})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "oncue_scheduler/delete_color_preset",
+        vol.Required("index"): int,
+    }
+)
+@websocket_api.async_response
+async def ws_delete_color_preset(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    entry_id = _get_entry_id(hass)
+    if entry_id is None:
+        connection.send_error(msg["id"], "not_found", "Integration not configured")
+        return
+    store = hass.data[DOMAIN][entry_id].store
+    try:
+        presets = await store.async_delete_color_preset(msg["index"])
+    except ValueError as err:
+        connection.send_error(msg["id"], "invalid_format", str(err))
+        return
+    connection.send_result(msg["id"], {"color_presets": presets})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "oncue_scheduler/color_preset_usage",
+        vol.Required("index"): int,
+    }
+)
+@callback
+def ws_color_preset_usage(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    entry_id = _get_entry_id(hass)
+    if entry_id is None:
+        connection.send_error(msg["id"], "not_found", "Integration not configured")
+        return
+    store = hass.data[DOMAIN][entry_id].store
+    connection.send_result(msg["id"], {"schedules": store.color_preset_usage(msg["index"])})

@@ -18,17 +18,19 @@ from .const import (
     DEFAULT_REVERT_DELAY,
     DEFAULT_SLOT_MINUTES,
     MAX_CUSTOM_DAYS,
+    MAX_HVAC_PRESET_COUNT,
     MAX_PALETTE_SIZE,
     MAX_REVERT_DELAY,
     SIGNAL_SCHEDULES_UPDATED,
     SLOT_TYPE_COLOR,
+    SLOT_TYPE_HVAC,
     SLOT_TYPE_ON_OFF,
     STORE_KEY,
     STORE_VERSION,
     VALID_CADENCES,
     VALID_SLOT_TYPES,
 )
-from .slot_values import validate_palette, validate_slot_value
+from .slot_values import validate_hvac_presets, validate_palette, validate_slot_value
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -38,7 +40,7 @@ def slots_per_day(slot_minutes: int) -> int:
     return 24 * 60 // slot_minutes
 
 
-def validate_schedule(data: dict[str, Any]) -> list[str]:
+def validate_schedule(data: dict[str, Any], hvac_presets: list[dict[str, Any]] | None = None, color_presets: list | None = None) -> list[str]:
     """Return a list of validation error strings, empty if valid."""
     errors: list[str] = []
 
@@ -85,15 +87,12 @@ def validate_schedule(data: dict[str, Any]) -> list[str]:
         errors.append(f"slot_type must be one of {VALID_SLOT_TYPES}")
 
     if slot_type == SLOT_TYPE_COLOR:
-        palette = data.get("palette")
-        if not palette:
-            errors.append("palette is required for color slot type")
-        else:
-            perr = validate_palette(palette)
-            if perr:
-                errors.append(perr)
-            elif len(palette) > MAX_PALETTE_SIZE:
-                errors.append(f"palette must have at most {MAX_PALETTE_SIZE} entries")
+        if not color_presets:
+            errors.append("no color presets defined — create at least one preset first")
+
+    if slot_type == SLOT_TYPE_HVAC:
+        if not hvac_presets:
+            errors.append("no HVAC presets defined — create at least one preset first")
 
     slots = data.get("slots", {})
     if slots:
@@ -143,16 +142,42 @@ class ScheduleStore:
         self._hass = hass
         self._store = Store(hass, STORE_VERSION, STORE_KEY)
         self._schedules: dict[str, dict[str, Any]] = {}
+        self._hvac_presets: list[dict[str, Any]] = []
+        self._color_presets: list[dict[str, Any] | str] = []
 
     async def async_load(self) -> None:
         data = await self._store.async_load()
         if data and isinstance(data, dict):
             self._schedules = data.get("schedules", {})
+            self._hvac_presets = data.get("hvac_presets", [])
+            self._color_presets = data.get("color_presets", [])
+            # Migrate: extract per-schedule presets into global store
+            if not self._hvac_presets:
+                for s in self._schedules.values():
+                    if s.get("slot_type") == SLOT_TYPE_HVAC and s.get("hvac_presets"):
+                        self._hvac_presets = s["hvac_presets"]
+                        break
+            for s in self._schedules.values():
+                s.pop("hvac_presets", None)
+            # Migrate: extract per-schedule palettes into global color presets
+            if not self._color_presets:
+                for s in self._schedules.values():
+                    if s.get("slot_type") == SLOT_TYPE_COLOR and s.get("palette"):
+                        self._color_presets = s["palette"]
+                        break
+            for s in self._schedules.values():
+                s.pop("palette", None)
         else:
             self._schedules = {}
+            self._hvac_presets = []
+            self._color_presets = []
 
     async def _async_save(self) -> None:
-        await self._store.async_save({"schedules": self._schedules})
+        await self._store.async_save({
+            "schedules": self._schedules,
+            "hvac_presets": self._hvac_presets,
+            "color_presets": self._color_presets,
+        })
         async_dispatcher_send(self._hass, SIGNAL_SCHEDULES_UPDATED)
 
     @property
@@ -193,9 +218,17 @@ class ScheduleStore:
                 data["slot_minutes"],
             )
 
-        errors = validate_schedule(data)
+        errors = validate_schedule(
+            data,
+            hvac_presets=self._hvac_presets if data.get("slot_type") == SLOT_TYPE_HVAC else None,
+            color_presets=self._color_presets if data.get("slot_type") == SLOT_TYPE_COLOR else None,
+        )
         if errors:
             raise ValueError("; ".join(errors))
+
+        # Strip per-schedule presets (they are stored globally)
+        data.pop("hvac_presets", None)
+        data.pop("palette", None)
 
         self._schedules[schedule_id] = data
         await self._async_save()
@@ -223,3 +256,98 @@ class ScheduleStore:
         schedule["active"] = active
         await self._async_save()
         return schedule
+
+    # ── Global HVAC presets ──
+
+    @property
+    def hvac_presets(self) -> list[dict[str, Any]]:
+        return self._hvac_presets
+
+    async def async_save_hvac_presets(self, presets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Replace the global HVAC presets list."""
+        err = validate_hvac_presets(presets)
+        if err:
+            raise ValueError(err)
+        if len(presets) > MAX_HVAC_PRESET_COUNT:
+            raise ValueError(f"hvac_presets must have at most {MAX_HVAC_PRESET_COUNT} entries")
+        self._hvac_presets = presets
+        await self._async_save()
+        return self._hvac_presets
+
+    def hvac_preset_usage(self, index: int) -> list[dict[str, str]]:
+        """Return list of {id, name} for schedules using the preset at index."""
+        value = index + 1  # slot values are 1-based
+        result: list[dict[str, str]] = []
+        for s in self._schedules.values():
+            if s.get("slot_type") != SLOT_TYPE_HVAC:
+                continue
+            for arr in s.get("slots", {}).values():
+                if value in arr:
+                    result.append({"id": s["id"], "name": s.get("name", "")})
+                    break
+        return result
+
+    async def async_delete_hvac_preset(self, index: int) -> list[dict[str, Any]]:
+        """Delete preset at index, remap all HVAC schedule slots."""
+        if index < 0 or index >= len(self._hvac_presets):
+            raise ValueError(f"preset index {index} out of range")
+        removed_value = index + 1
+        # Remap slot values across all HVAC schedules
+        for s in self._schedules.values():
+            if s.get("slot_type") != SLOT_TYPE_HVAC:
+                continue
+            for key, arr in s.get("slots", {}).items():
+                s["slots"][key] = [
+                    0 if v == removed_value else (v - 1 if v > removed_value else v)
+                    for v in arr
+                ]
+        self._hvac_presets.pop(index)
+        await self._async_save()
+        return self._hvac_presets
+
+    # ── Global color presets ──
+
+    @property
+    def color_presets(self) -> list[dict[str, Any] | str]:
+        return self._color_presets
+
+    async def async_save_color_presets(self, presets: list) -> list:
+        """Replace the global color presets list."""
+        err = validate_palette(presets)
+        if err:
+            raise ValueError(err)
+        if len(presets) > MAX_PALETTE_SIZE:
+            raise ValueError(f"color_presets must have at most {MAX_PALETTE_SIZE} entries")
+        self._color_presets = presets
+        await self._async_save()
+        return self._color_presets
+
+    def color_preset_usage(self, index: int) -> list[dict[str, str]]:
+        """Return list of {id, name} for schedules using the preset at index."""
+        value = index + 1  # slot values are 1-based
+        result: list[dict[str, str]] = []
+        for s in self._schedules.values():
+            if s.get("slot_type") != SLOT_TYPE_COLOR:
+                continue
+            for arr in s.get("slots", {}).values():
+                if value in arr:
+                    result.append({"id": s["id"], "name": s.get("name", "")})
+                    break
+        return result
+
+    async def async_delete_color_preset(self, index: int) -> list:
+        """Delete preset at index, remap all color schedule slots."""
+        if index < 0 or index >= len(self._color_presets):
+            raise ValueError(f"preset index {index} out of range")
+        removed_value = index + 1
+        for s in self._schedules.values():
+            if s.get("slot_type") != SLOT_TYPE_COLOR:
+                continue
+            for key, arr in s.get("slots", {}).items():
+                s["slots"][key] = [
+                    0 if v == removed_value else (v - 1 if v > removed_value else v)
+                    for v in arr
+                ]
+        self._color_presets.pop(index)
+        await self._async_save()
+        return self._color_presets
