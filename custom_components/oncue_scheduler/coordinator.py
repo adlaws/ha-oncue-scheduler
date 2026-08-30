@@ -183,17 +183,19 @@ class ScheduleCoordinator:
     async def _async_apply_state(self, entity_id: str, desired: int, slot_type: str, schedule: dict[str, Any] | None = None) -> None:
         state = self._hass.states.get(entity_id)
         if state is None:
-            self._unavailable.add(entity_id)
-            _LOGGER.warning(
-                "Entity '%s' not found, skipping", entity_id
-            )
+            if entity_id not in self._unavailable:
+                _LOGGER.warning(
+                    "Entity '%s' not found, skipping", entity_id
+                )
+                self._unavailable.add(entity_id)
             return
 
         if state.state in ("unavailable", "unknown"):
-            self._unavailable.add(entity_id)
-            _LOGGER.warning(
-                "Entity '%s' is %s, skipping", entity_id, state.state
-            )
+            if entity_id not in self._unavailable:
+                _LOGGER.warning(
+                    "Entity '%s' is %s, skipping", entity_id, state.state
+                )
+                self._unavailable.add(entity_id)
             return
 
         self._unavailable.discard(entity_id)
