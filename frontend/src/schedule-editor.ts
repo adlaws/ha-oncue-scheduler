@@ -1,7 +1,7 @@
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles } from "./styles";
-import type { Schedule, Conflict, HomeAssistant, HvacPreset, PaletteEntry, PaletteEntryObject } from "./types";
+import type { Schedule, Conflict, HomeAssistant, HvacPreset, PaletteEntry, PaletteEntryObject, BrightnessPreset, ScenePreset } from "./types";
 import { normalizePaletteEntry, paletteEntryDisplayColor, paletteEntryBackground } from "./types";
 import "./schedule-grid";
 import "./entity-picker";
@@ -13,6 +13,19 @@ import type { ToastNotification } from "./toast-notification";
 const SLOTS_PER_DAY = 96;
 const DAY_KEYS_WEEKLY = ["0", "1", "2", "3", "4", "5", "6"];
 
+const DEFAULT_BRIGHTNESS_PRESETS: BrightnessPreset[] = [
+    { brightness: 3, color: "#1a1a2e", alias: "1%" },
+    { brightness: 64, color: "#4a6fa5", alias: "25%" },
+    { brightness: 128, color: "#ff9800", alias: "50%" },
+    { brightness: 191, color: "#ffc107", alias: "75%" },
+    { brightness: 255, color: "#ffeb3b", alias: "100%" },
+];
+
+/**
+ * Build an empty slots object for the given cadence.
+ * @param cadence - "daily", "weekly", or "custom".
+ * @returns Day-keyed map of zero-filled slot arrays.
+ */
 function defaultSlots(cadence: string): Record<string, number[]> {
     if (cadence === "daily") return { "0": new Array(SLOTS_PER_DAY).fill(0) };
     if (cadence === "weekly") {
@@ -23,6 +36,12 @@ function defaultSlots(cadence: string): Record<string, number[]> {
     return {};
 }
 
+/**
+ * Generate an array of ISO date strings between two dates, inclusive.
+ * @param start - ISO start date.
+ * @param end - ISO end date.
+ * @returns Array of ISO date strings.
+ */
 function dateRange(start: string, end: string): string[] {
     const dates: string[] = [];
     const d = new Date(start);
@@ -34,6 +53,7 @@ function dateRange(start: string, end: string): string[] {
     return dates;
 }
 
+/** Full schedule editor with form fields, grid, preset management, and CRUD. */
 @customElement("schedule-editor")
 export class ScheduleEditor extends LitElement {
     @property({ attribute: false }) hass!: HomeAssistant;
@@ -41,6 +61,8 @@ export class ScheduleEditor extends LitElement {
     @property({ type: Boolean }) isNew = false;
     @property({ attribute: false }) globalHvacPresets: HvacPreset[] = [];
     @property({ attribute: false }) globalColorPresets: PaletteEntry[] = [];
+    @property({ attribute: false }) globalBrightnessPresets: BrightnessPreset[] = [];
+    @property({ attribute: false }) globalScenePresets: ScenePreset[] = [];
 
     @state() private _name = "";
     @state() private _entityIds: string[] = [];
@@ -70,6 +92,15 @@ export class ScheduleEditor extends LitElement {
     @state() private _confirmDeletePaletteIndex: number | null = null;
     @state() private _confirmDeletePaletteUsage: { id: string; name: string }[] = [];
     @state() private _pendingSlotType: string | null = null;
+    @state() private _brightnessPresets: BrightnessPreset[] = [];
+    @state() private _brightnessEditIndex: number | null = null;
+    @state() private _confirmDeleteBrightnessIndex: number | null = null;
+    @state() private _confirmDeleteBrightnessUsage: { id: string; name: string }[] = [];
+    @state() private _scenePresets: ScenePreset[] = [];
+    @state() private _sceneEditIndex: number | null = null;
+    @state() private _confirmDeleteSceneIndex: number | null = null;
+    @state() private _confirmDeleteSceneUsage: { id: string; name: string }[] = [];
+    @state() private _isNewPreset = false;
 
     private _unsubOverrides: (() => void) | null = null;
 
@@ -84,6 +115,7 @@ export class ScheduleEditor extends LitElement {
         this._unsubOverrides = null;
     }
 
+    /** Subscribe to real-time override change events for the current schedule. */
     private async _subscribeOverrideEvents() {
         try {
             this._unsubOverrides = await this.hass.connection.subscribeEvents(
@@ -103,12 +135,16 @@ export class ScheduleEditor extends LitElement {
     static styles = [
         sharedStyles,
         css`
+      /* ── Host & layout ── */
       :host {
         display: block;
         height: 100%;
         overflow-y: auto;
         padding: 16px;
         box-sizing: border-box;
+      }
+      .editor-wrapper {
+        position: relative;
       }
       .editor-header {
         display: flex;
@@ -124,6 +160,8 @@ export class ScheduleEditor extends LitElement {
         display: flex;
         gap: 8px;
       }
+
+      /* ── Form layout ── */
       .form {
         display: grid;
         grid-template-columns: 1fr 1fr;
@@ -142,6 +180,12 @@ export class ScheduleEditor extends LitElement {
       textarea {
         min-height: 60px;
         resize: vertical;
+      }
+      .checkbox-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding-top: 20px;
       }
       .revert-row {
         display: flex;
@@ -165,29 +209,21 @@ export class ScheduleEditor extends LitElement {
         margin-left: 8px;
         cursor: pointer;
       }
-      .never-label input[type="checkbox"] {
-        width: auto;
-      }
-      .grid-section {
-        margin-top: 16px;
-      }
-      .grid-section h3 {
-        margin: 0 0 8px;
-        font-size: 14px;
-      }
-      .empty-msg {
-        text-align: center;
-        color: var(--secondary-text-color, #727272);
-        padding: 48px 16px;
-        font-size: 16px;
-      }
+
+      /* ── Cadence & date range ── */
       .cadence-row {
         display: flex;
         align-items: flex-end;
         gap: 8px;
       }
-      .cadence-row select {
+      .cadence-field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
         flex: 1;
+      }
+      .cadence-field select {
+        width: 100%;
       }
       .cadence-row .repeat-check {
         display: flex;
@@ -196,18 +232,6 @@ export class ScheduleEditor extends LitElement {
         padding-bottom: 8px;
         white-space: nowrap;
         font-size: 13px;
-      }
-      .cadence-row .repeat-check input[type="checkbox"] {
-        width: auto;
-      }
-      .checkbox-row {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding-top: 20px;
-      }
-      .checkbox-row input[type="checkbox"] {
-        width: auto;
       }
       .date-range-row {
         display: flex;
@@ -226,47 +250,15 @@ export class ScheduleEditor extends LitElement {
         padding-bottom: 8px;
         white-space: nowrap;
       }
+      /* auto-width for all standalone checkboxes */
+      .checkbox-row input[type="checkbox"],
+      .never-label input[type="checkbox"],
+      .cadence-row .repeat-check input[type="checkbox"],
       .date-range-row .repeat-check input[type="checkbox"] {
         width: auto;
       }
-      .loading-overlay {
-        position: absolute;
-        inset: 0;
-        background: rgba(0, 0, 0, 0.1);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        z-index: 50;
-        border-radius: 8px;
-      }
-      .spinner {
-        width: 32px;
-        height: 32px;
-        border: 3px solid var(--ss-border);
-        border-top-color: var(--ss-primary);
-        border-radius: 50%;
-        animation: spin 0.8s linear infinite;
-      }
-      @keyframes spin {
-        to { transform: rotate(360deg); }
-      }
-      .editor-wrapper {
-        position: relative;
-      }
-      .inline-confirm {
-        display: inline-flex;
-        gap: 4px;
-        align-items: center;
-        font-size: 13px;
-      }
-      .inline-confirm span {
-        color: var(--error-color, #db4437);
-        font-weight: 500;
-      }
-      .inline-confirm button {
-        font-size: 12px;
-        padding: 4px 8px;
-      }
+
+      /* ── Status indicator ── */
       .status-toggle {
         display: inline-flex;
         align-items: center;
@@ -290,12 +282,118 @@ export class ScheduleEditor extends LitElement {
       .status-dot.paused {
         background: var(--disabled-text-color, #bdbdbd);
       }
-      .palette-editor {
+
+      /* ── Grid section ── */
+      .grid-section {
+        margin-top: 16px;
+      }
+      .grid-section h3 {
+        margin: 0 0 8px;
+        font-size: 14px;
+      }
+      .empty-msg {
+        text-align: center;
+        color: var(--secondary-text-color, #727272);
+        padding: 48px 16px;
+        font-size: 16px;
+      }
+
+      /* ── Shared: color swatch inputs ── */
+      input[type="color"] {
+        padding: 0;
+        border: 1px solid var(--ss-border);
+        border-radius: 4px;
+        cursor: pointer;
+        background: none;
+      }
+
+      /* ── Shared: interactive chip base ── */
+      .palette-entry-chip,
+      .hvac-preset-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        cursor: pointer;
+        border: 2px solid transparent;
+        transition: border-color 0.15s, box-shadow 0.15s;
+        position: relative;
+      }
+      .palette-entry-chip:hover,
+      .hvac-preset-chip:hover {
+        box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+      }
+
+      /* ── Shared: circular remove button on chips ── */
+      .palette-remove,
+      .palette-entry-chip .chip-remove,
+      .hvac-preset-chip .chip-remove {
+        border-radius: 50%;
+        border: none;
+        background: var(--error-color, #db4437);
+        color: #fff;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        line-height: 1;
+      }
+
+      /* ── Shared: edit form panels ── */
+      .palette-edit-form,
+      .hvac-edit-form,
+      .preset-confirm-overlay {
+        padding: 12px;
+        border: 1px solid var(--ss-border);
+        border-radius: 8px;
+        background: var(--secondary-background-color, #f5f5f5);
+      }
+
+      /* ── Modal overlay for preset editing ── */
+      .modal-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.5);
+        z-index: 100;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .modal-panel {
+        background: var(--card-background-color, #fff);
+        border-radius: 12px;
+        padding: 20px;
+        max-width: 600px;
+        width: 90vw;
+        max-height: 85vh;
+        overflow-y: auto;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+      }
+      .modal-panel h3 {
+        margin: 0 0 12px;
+        font-size: 16px;
+      }
+      .modal-warning {
+        font-size: 13px;
+        color: var(--warning-color, #ff9800);
+        margin: 0 0 12px;
+        padding: 6px 10px;
+        background: rgba(255, 152, 0, 0.1);
+        border-radius: 6px;
+        border-left: 3px solid var(--warning-color, #ff9800);
+      }
+
+      /* ── Shared: flex-wrap item lists ── */
+      .palette-editor,
+      .hvac-preset-list,
+      .cycle-colors {
         display: flex;
         flex-wrap: wrap;
         gap: 6px;
         align-items: center;
       }
+
+      /* ── Palette (on_off colour swatches) ── */
       .palette-entry {
         position: relative;
         display: inline-flex;
@@ -304,11 +402,6 @@ export class ScheduleEditor extends LitElement {
       .palette-entry input[type="color"] {
         width: 32px;
         height: 32px;
-        padding: 0;
-        border: 1px solid var(--ss-border);
-        border-radius: 4px;
-        cursor: pointer;
-        background: none;
       }
       .palette-remove {
         position: absolute;
@@ -316,17 +409,7 @@ export class ScheduleEditor extends LitElement {
         right: -6px;
         width: 16px;
         height: 16px;
-        border-radius: 50%;
-        border: none;
-        background: var(--error-color, #db4437);
-        color: #fff;
         font-size: 10px;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        padding: 0;
-        line-height: 1;
       }
       .palette-add {
         width: 32px;
@@ -345,22 +428,14 @@ export class ScheduleEditor extends LitElement {
       .palette-add:hover {
         background: var(--ss-cell-off);
       }
+
+      /* ── Palette entry chips (HVAC / cycle mode) ── */
       .palette-entry-chip {
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
         width: 36px;
         height: 36px;
         border-radius: 6px;
-        cursor: pointer;
-        border: 2px solid transparent;
-        transition: border-color 0.15s, box-shadow 0.15s;
-        position: relative;
         justify-content: center;
         box-sizing: border-box;
-      }
-      .palette-entry-chip:hover {
-        box-shadow: 0 1px 4px rgba(0,0,0,0.3);
       }
       .palette-entry-chip .palette-mode-label {
         font-size: 14px;
@@ -373,26 +448,14 @@ export class ScheduleEditor extends LitElement {
         right: -6px;
         width: 14px;
         height: 14px;
-        border-radius: 50%;
-        border: none;
-        background: var(--error-color, #db4437);
-        color: #fff;
         font-size: 9px;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        padding: 0;
-        line-height: 1;
       }
+
+      /* ── Palette edit form ── */
       .palette-edit-form {
         display: flex;
         flex-direction: column;
         gap: 10px;
-        padding: 12px;
-        border: 1px solid var(--ss-border);
-        border-radius: 8px;
-        background: var(--secondary-background-color, #f5f5f5);
         margin-top: 8px;
       }
       .palette-edit-row {
@@ -403,27 +466,18 @@ export class ScheduleEditor extends LitElement {
       .palette-edit-row input[type="color"] {
         width: 36px;
         height: 36px;
-        padding: 0;
-        border: 1px solid var(--ss-border);
-        border-radius: 4px;
-        cursor: pointer;
-        background: none;
       }
       .palette-mode-help {
         font-size: 12px;
         color: var(--secondary-text-color, #727272);
         padding: 4px 0;
       }
+
+      /* ── Cycle configuration ── */
       .cycle-config {
         display: flex;
         flex-direction: column;
         gap: 8px;
-      }
-      .cycle-colors {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 6px;
-        align-items: center;
       }
       .cycle-options {
         display: flex;
@@ -434,33 +488,19 @@ export class ScheduleEditor extends LitElement {
         flex: 1;
         min-width: 120px;
       }
+
+      /* ── HVAC presets ── */
       .hvac-presets {
         display: flex;
         flex-direction: column;
         gap: 8px;
       }
-      .hvac-preset-list {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 6px;
-        align-items: center;
-      }
       .hvac-preset-chip {
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
         padding: 4px 10px;
         border-radius: 16px;
         font-size: 12px;
-        cursor: pointer;
-        border: 2px solid transparent;
-        transition: border-color 0.15s, box-shadow 0.15s;
         color: #fff;
         text-shadow: 0 1px 2px rgba(0,0,0,0.4);
-        position: relative;
-      }
-      .hvac-preset-chip:hover {
-        box-shadow: 0 1px 4px rgba(0,0,0,0.3);
       }
       .hvac-preset-chip .chip-icon {
         --mdi-icon-size: 16px;
@@ -469,45 +509,19 @@ export class ScheduleEditor extends LitElement {
       .hvac-preset-chip .chip-remove {
         width: 14px;
         height: 14px;
-        border-radius: 50%;
-        border: none;
-        background: rgba(0,0,0,0.3);
-        color: #fff;
         font-size: 9px;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        padding: 0;
-        line-height: 1;
+        background: rgba(0,0,0,0.3);
         margin-left: 2px;
       }
       .hvac-preset-chip .chip-remove:hover {
         background: var(--error-color, #db4437);
       }
-      .preset-confirm-overlay {
-        padding: 12px;
-        border: 1px solid var(--ss-border);
-        border-radius: 8px;
-        background: var(--secondary-background-color, #f5f5f5);
-        font-size: 13px;
-      }
-      .preset-confirm-overlay p {
-        margin: 0 0 8px;
-      }
-      .preset-confirm-overlay .confirm-actions {
-        display: flex;
-        gap: 6px;
-        justify-content: flex-end;
-      }
+
+      /* ── HVAC edit form ── */
       .hvac-edit-form {
         display: grid;
         grid-template-columns: 1fr 1fr 1fr;
         gap: 8px;
-        padding: 12px;
-        border: 1px solid var(--ss-border);
-        border-radius: 8px;
-        background: var(--secondary-background-color, #f5f5f5);
       }
       .hvac-edit-form .form-group {
         margin-bottom: 0;
@@ -527,11 +541,6 @@ export class ScheduleEditor extends LitElement {
       .hvac-edit-form .color-alias-row input[type="color"] {
         width: 36px;
         height: 36px;
-        padding: 0;
-        border: 1px solid var(--ss-border);
-        border-radius: 4px;
-        cursor: pointer;
-        background: none;
         flex-shrink: 0;
       }
       .hvac-edit-form .color-alias-row .alias-input {
@@ -540,6 +549,83 @@ export class ScheduleEditor extends LitElement {
       .hvac-edit-form .icon-picker-group {
         flex: 1;
         min-width: 160px;
+      }
+
+      /* ── Preset delete confirmation ── */
+      .preset-confirm-overlay {
+        font-size: 13px;
+      }
+      .preset-confirm-overlay p {
+        margin: 0 0 8px;
+      }
+      .preset-confirm-overlay .confirm-actions {
+        display: flex;
+        gap: 6px;
+        justify-content: flex-end;
+      }
+
+      /* ── Inline confirm & loading overlay ── */
+      .inline-confirm {
+        display: inline-flex;
+        gap: 4px;
+        align-items: center;
+        font-size: 13px;
+      }
+      .inline-confirm span {
+        color: var(--error-color, #db4437);
+        font-weight: 500;
+      }
+      .inline-confirm button {
+        font-size: 12px;
+        padding: 4px 8px;
+      }
+      /* ── Save button states ── */
+      button.primary:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      button.primary.pulse {
+        animation: save-pulse 2s ease-in-out infinite;
+      }
+      @keyframes save-pulse {
+        0%, 100% { box-shadow: 0 0 0 0 transparent; }
+        50% { box-shadow: 0 0 8px 2px var(--ss-primary); }
+      }
+
+      /* ── Unsaved changes banner ── */
+      .unsaved-banner {
+        font-size: 13px;
+        padding: 8px 12px;
+        border-radius: 4px;
+        margin-bottom: 12px;
+        min-height: 18px;
+        box-sizing: content-box;
+      }
+      .unsaved-banner.visible {
+        background: var(--warning-color, #ff9800);
+        color: #fff;
+      }
+
+      .loading-overlay {
+        position: absolute;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.1);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 50;
+        border-radius: 8px;
+      }
+      .spinner {
+        width: 32px;
+        height: 32px;
+        border: 3px solid var(--ss-border);
+        border-top-color: var(--ss-primary);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin {
+        to { transform: rotate(360deg); }
       }
     `,
     ];
@@ -552,6 +638,10 @@ export class ScheduleEditor extends LitElement {
             this._loadOverrides();
         } else if (changed.has("globalHvacPresets") && !this._dirty) {
             this._hvacPresets = this.globalHvacPresets.map((p) => ({ ...p }));
+        } else if (changed.has("globalBrightnessPresets") && !this._dirty) {
+            this._brightnessPresets = this.globalBrightnessPresets.map((p) => ({ ...p }));
+        } else if (changed.has("globalScenePresets") && !this._dirty) {
+            this._scenePresets = this.globalScenePresets.map((p) => ({ ...p }));
         }
     }
 
@@ -559,10 +649,12 @@ export class ScheduleEditor extends LitElement {
         return this.renderRoot.querySelector("toast-notification");
     }
 
+    /** Show a toast notification. */
     private _showToast(message: string, type: "info" | "warning" | "error" = "info") {
         this._toast?.show(message, type);
     }
 
+    /** Populate form state from the current schedule (or defaults for new). */
     private _loadFromSchedule() {
         if (this.schedule) {
             this._name = this.schedule.name;
@@ -580,6 +672,10 @@ export class ScheduleEditor extends LitElement {
             this._palette = this.globalColorPresets.length > 0 ? [...this.globalColorPresets] : ["#ff0000", "#00ff00", "#0000ff", "#ffff00", "#ff00ff", "#00ffff", "#ff8800", "#ffffff"];
             this._hvacPresets = this.globalHvacPresets.map((p) => ({ ...p }));
             this._hvacEditIndex = null;
+            this._brightnessPresets = this.globalBrightnessPresets.length > 0 ? this.globalBrightnessPresets.map((p) => ({ ...p })) : DEFAULT_BRIGHTNESS_PRESETS.map((p) => ({ ...p }));
+            this._brightnessEditIndex = null;
+            this._scenePresets = this.globalScenePresets.map((p) => ({ ...p }));
+            this._sceneEditIndex = null;
         } else {
             this._name = "";
             this._entityIds = [];
@@ -594,6 +690,10 @@ export class ScheduleEditor extends LitElement {
             this._palette = this.globalColorPresets.length > 0 ? [...this.globalColorPresets] : ["#ff0000", "#00ff00", "#0000ff", "#ffff00", "#ff00ff", "#00ffff", "#ff8800", "#ffffff"];
             this._hvacPresets = this.globalHvacPresets.map((p) => ({ ...p }));
             this._hvacEditIndex = null;
+            this._brightnessPresets = this.globalBrightnessPresets.length > 0 ? this.globalBrightnessPresets.map((p) => ({ ...p })) : DEFAULT_BRIGHTNESS_PRESETS.map((p) => ({ ...p }));
+            this._brightnessEditIndex = null;
+            this._scenePresets = this.globalScenePresets.map((p) => ({ ...p }));
+            this._sceneEditIndex = null;
         }
         this._dirty = false;
         this._conflicts = [];
@@ -650,10 +750,14 @@ export class ScheduleEditor extends LitElement {
               `
                     : html`<button class="danger" @click=${this._onDelete}>Delete</button>`
                 : nothing}
-          <button class="primary" ?disabled=${busy} @click=${this._onSave}>
+          <button class="primary ${this._dirty ? "pulse" : ""}" ?disabled=${busy || !this._dirty} @click=${this._onSave}>
             ${this._saving ? "Saving..." : "Save"}
           </button>
         </div>
+      </div>
+
+      <div class="unsaved-banner ${this._dirty && !this.isNew ? "visible" : ""}">
+        ${this._dirty && !this.isNew ? "Changes will not take effect until the schedule is saved." : nothing}
       </div>
 
       ${this._conflicts.length > 0
@@ -680,23 +784,57 @@ export class ScheduleEditor extends LitElement {
           />
         </div>
 
-        <div class="form-group">
-          <label for="cadence">Cadence</label>
+        <div class="form-group full-width">
           <div class="cadence-row">
-            <select
-              id="cadence"
-              .value=${this._cadence}
-              @change=${(e: Event) => {
-                const newCadence = (e.target as HTMLSelectElement).value as "daily" | "weekly" | "custom";
-                this._cadence = newCadence;
-                this._slots = defaultSlots(newCadence);
-                this._dirty = true;
-            }}
-            >
-              <option value="daily">Daily</option>
-              <option value="weekly">Weekly</option>
-              <option value="custom">Custom</option>
-            </select>
+            <div class="cadence-field">
+              <label for="slot-type">Slot Type</label>
+              <select
+                id="slot-type"
+                .value=${this._slotType}
+                @change=${(e: Event) => {
+                    const newType = (e.target as HTMLSelectElement).value;
+                    if (newType !== this._slotType) {
+                        const hasData = Object.values(this._slots).some(
+                            arr => arr.some(v => v !== 0)
+                        );
+                        if (hasData) {
+                            this._pendingSlotType = newType;
+                            (e.target as HTMLSelectElement).value = this._slotType;
+                            return;
+                        }
+                        this._slotType = newType;
+                        this._slots = defaultSlots(this._cadence);
+                        if (this._cadence === "custom") {
+                            this._rebuildCustomSlots();
+                        }
+                        this._dirty = true;
+                    }
+                }}
+              >
+                <option value="on_off">On/Off</option>
+                <option value="brightness">Brightness / Percentage</option>
+                <option value="color">Color</option>
+                <option value="hvac">HVAC</option>
+                <option value="scene">Scene</option>
+              </select>
+            </div>
+            <div class="cadence-field">
+              <label for="cadence">Cadence</label>
+              <select
+                id="cadence"
+                .value=${this._cadence}
+                @change=${(e: Event) => {
+                    const newCadence = (e.target as HTMLSelectElement).value as "daily" | "weekly" | "custom";
+                    this._cadence = newCadence;
+                    this._slots = defaultSlots(newCadence);
+                    this._dirty = true;
+                }}
+              >
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="custom">Custom</option>
+              </select>
+            </div>
             <label class="repeat-check">
               <input
                 type="checkbox"
@@ -708,54 +846,72 @@ export class ScheduleEditor extends LitElement {
               />
               Repeat
             </label>
+            <div class="cadence-field">
+              <label>Revert after</label>
+              <div class="revert-row">
+                <input
+                  type="number"
+                  min="0"
+                  max="59"
+                  style="width: 50px"
+                  .value=${this._revertDelay !== null ? String(Math.floor(this._revertDelay / 60)) : "0"}
+                  ?disabled=${this._revertDelay === null}
+                  @input=${(e: InputEvent) => {
+                    const mins = parseInt((e.target as HTMLInputElement).value) || 0;
+                    const secs = (this._revertDelay ?? 0) % 60;
+                    this._revertDelay = mins * 60 + secs;
+                    this._dirty = true;
+                }}
+                />
+                <span>m</span>
+                <input
+                  type="number"
+                  min="0"
+                  max="59"
+                  style="width: 50px"
+                  .value=${this._revertDelay !== null ? String((this._revertDelay) % 60) : "0"}
+                  ?disabled=${this._revertDelay === null}
+                  @input=${(e: InputEvent) => {
+                    const secs = parseInt((e.target as HTMLInputElement).value) || 0;
+                    const mins = Math.floor((this._revertDelay ?? 0) / 60);
+                    this._revertDelay = mins * 60 + secs;
+                    this._dirty = true;
+                }}
+                />
+                <span>s</span>
+                <label class="never-label">
+                  <input
+                    type="checkbox"
+                    .checked=${this._revertDelay === null}
+                    @change=${(e: Event) => {
+                    this._revertDelay = (e.target as HTMLInputElement).checked ? null : 180;
+                    this._dirty = true;
+                }}
+                  />
+                  Never
+                </label>
+              </div>
+            </div>
           </div>
-        </div>
-
-        <div class="form-group">
-          <label>Revert external changes after</label>
-          <div class="revert-row">
-            <input
-              type="number"
-              min="0"
-              max="59"
-              style="width: 60px"
-              .value=${this._revertDelay !== null ? String(Math.floor(this._revertDelay / 60)) : "0"}
-              ?disabled=${this._revertDelay === null}
-              @input=${(e: InputEvent) => {
-                const mins = parseInt((e.target as HTMLInputElement).value) || 0;
-                const secs = (this._revertDelay ?? 0) % 60;
-                this._revertDelay = mins * 60 + secs;
-                this._dirty = true;
-            }}
-            />
-            <span>min</span>
-            <input
-              type="number"
-              min="0"
-              max="59"
-              style="width: 60px"
-              .value=${this._revertDelay !== null ? String((this._revertDelay) % 60) : "0"}
-              ?disabled=${this._revertDelay === null}
-              @input=${(e: InputEvent) => {
-                const secs = parseInt((e.target as HTMLInputElement).value) || 0;
-                const mins = Math.floor((this._revertDelay ?? 0) / 60);
-                this._revertDelay = mins * 60 + secs;
-                this._dirty = true;
-            }}
-            />
-            <span>sec</span>
-            <label class="never-label">
-              <input
-                type="checkbox"
-                .checked=${this._revertDelay === null}
-                @change=${(e: Event) => {
-                this._revertDelay = (e.target as HTMLInputElement).checked ? null : 180;
-                this._dirty = true;
-            }}
-              />
-              Never
-            </label>
-          </div>
+          ${this._pendingSlotType ? html`
+            <div class="preset-confirm-overlay">
+              <p>Changing slot type will <b>clear all scheduled data</b>.</p>
+              <p>The current <b>${this._slotType}</b> values are incompatible with <b>${this._pendingSlotType}</b> and cannot be preserved.</p>
+              <p style="margin-bottom:0">If you need both types, create a separate schedule instead.</p>
+              <div class="confirm-actions">
+                <button class="secondary" @click=${() => { this._pendingSlotType = null; }}>Cancel</button>
+                <button class="danger" @click=${() => {
+                    this._slotType = this._pendingSlotType!;
+                    this._pendingSlotType = null;
+                    this._slots = defaultSlots(this._cadence);
+                    if (this._cadence === "custom") {
+                        this._rebuildCustomSlots();
+                    }
+                    this._dirty = true;
+                }}>Change &amp; Clear</button>
+              </div>
+            </div>
+          ` : nothing}
         </div>
 
         ${this._cadence === "custom"
@@ -812,132 +968,6 @@ export class ScheduleEditor extends LitElement {
           ></entity-picker>
         </div>
 
-        <div class="form-group">
-          <label for="slot-type">Slot Type</label>
-          <select
-            id="slot-type"
-            .value=${this._slotType}
-            @change=${(e: Event) => {
-                const newType = (e.target as HTMLSelectElement).value;
-                if (newType !== this._slotType) {
-                    const hasData = Object.values(this._slots).some(
-                        arr => arr.some(v => v !== 0)
-                    );
-                    if (hasData) {
-                        this._pendingSlotType = newType;
-                        (e.target as HTMLSelectElement).value = this._slotType;
-                        return;
-                    }
-                    this._slotType = newType;
-                    this._slots = defaultSlots(this._cadence);
-                    if (this._cadence === "custom") {
-                        this._rebuildCustomSlots();
-                    }
-                    this._dirty = true;
-                }
-            }}
-          >
-            <option value="on_off">On/Off</option>
-            <option value="color">Color</option>
-            <option value="hvac">HVAC</option>
-          </select>
-          ${this._pendingSlotType ? html`
-            <div class="preset-confirm-overlay">
-              <p>Changing slot type will <b>clear all scheduled data</b>.</p>
-              <p>The current <b>${this._slotType}</b> values are incompatible with <b>${this._pendingSlotType}</b> and cannot be preserved.</p>
-              <p style="margin-bottom:0">If you need both types, create a separate schedule instead.</p>
-              <div class="confirm-actions">
-                <button class="secondary" @click=${() => { this._pendingSlotType = null; }}>Cancel</button>
-                <button class="danger" @click=${() => {
-                    this._slotType = this._pendingSlotType!;
-                    this._pendingSlotType = null;
-                    this._slots = defaultSlots(this._cadence);
-                    if (this._cadence === "custom") {
-                        this._rebuildCustomSlots();
-                    }
-                    this._dirty = true;
-                }}>Change &amp; Clear</button>
-              </div>
-            </div>
-          ` : nothing}
-        </div>
-
-        ${this._slotType === "color" ? html`
-          <div class="form-group full-width">
-            <label>Color Palette</label>
-            <div class="palette-editor">
-              ${this._palette.map((entry, i) => {
-                    const norm = normalizePaletteEntry(entry);
-                    return html`
-                <div class="palette-entry-chip"
-                     style="background: ${paletteEntryBackground(norm)}"
-                     title="${this._paletteEntryTooltip(norm)}"
-                     @click=${() => { this._paletteEditIndex = i; }}>
-                  <span class="palette-mode-label">${this._paletteModeBadge(norm.mode)}</span>
-                  ${this._palette.length > 1 ? html`
-                    <button class="chip-remove" @click=${(e: Event) => {
-                                e.stopPropagation();
-                                this._requestDeletePaletteEntry(i);
-                            }}>✕</button>
-                  ` : nothing}
-                </div>
-              `;
-                })}
-              ${this._palette.length < 10 ? html`
-                <button class="palette-add" @click=${() => {
-                        this._palette = [...this._palette, "#888888"];
-                        this._paletteEditIndex = this._palette.length - 1;
-                        this._dirty = true;
-                    }}>+</button>
-              ` : nothing}
-            </div>
-            ${this._confirmDeletePaletteIndex !== null && this._confirmDeletePaletteIndex < this._palette.length
-                    ? this._renderPaletteDeleteConfirm(this._confirmDeletePaletteIndex)
-                    : nothing}
-            ${this._paletteEditIndex !== null && this._paletteEditIndex < this._palette.length
-                    ? this._renderPaletteEditForm(
-                        normalizePaletteEntry(this._palette[this._paletteEditIndex]),
-                        this._paletteEditIndex,
-                    )
-                    : nothing}
-          </div>
-        ` : nothing}
-
-        ${this._slotType === "hvac" ? html`
-          <div class="form-group full-width">
-            <label>HVAC Presets</label>
-            <div class="hvac-presets">
-              <div class="hvac-preset-list">
-                ${this._hvacPresets.map((preset, i) => html`
-                  <div
-                    class="hvac-preset-chip"
-                    style="background: ${preset.color}"
-                    title="${this._hvacPresetTooltip(preset)}"
-                    @click=${() => { this._hvacEditIndex = i; }}
-                  >
-                    ${preset.icon ? html`<mdi-icon class="chip-icon" .icon=${preset.icon}></mdi-icon>` : nothing}
-                    ${preset.alias || this._hvacPresetLabel(preset)}
-                    ${this._hvacPresets.length > 1 ? html`
-                      <button class="chip-remove" @click=${(e: Event) => {
-                                e.stopPropagation();
-                                this._requestDeletePreset(i);
-                            }}>✕</button>
-                    ` : nothing}
-                  </div>
-                `)}
-                ${this._hvacPresets.length < 20 ? html`
-                  <button class="palette-add" @click=${this._addHvacPreset}>+</button>
-                ` : nothing}
-              </div>
-              ${this._confirmDeletePresetIndex !== null && this._confirmDeletePresetIndex < this._hvacPresets.length
-                    ? this._renderPresetDeleteConfirm(this._confirmDeletePresetIndex)
-                    : nothing}
-              ${this._hvacEditIndex !== null && this._hvacEditIndex < this._hvacPresets.length
-                    ? this._renderHvacEditForm(this._hvacPresets[this._hvacEditIndex], this._hvacEditIndex)
-                    : nothing}
-            </div>
-          </div>
-        ` : nothing}
       </div>
 
       <div class="grid-section">
@@ -949,16 +979,128 @@ export class ScheduleEditor extends LitElement {
           .slotType=${this._slotType}
           .palette=${this._palette}
           .hvacPresets=${this._hvacPresets}
+          .brightnessPresets=${this._brightnessPresets}
+          .scenePresets=${this._scenePresets}
           @slots-changed=${(e: CustomEvent) => {
                 this._slots = e.detail.slots;
                 this._dirty = true;
             }}
+          @preset-edit=${(e: CustomEvent) => { this._onPresetEdit(e.detail.index); }}
+          @preset-delete=${(e: CustomEvent) => { this._onPresetDelete(e.detail.index); }}
+          @preset-add=${() => { this._onPresetAdd(); }}
         ></schedule-grid>
       </div>
+      </div>
+
+      ${this._renderPresetModal()}
+    `;
+    }
+
+    private _renderPresetModal() {
+        const colorEdit = this._slotType === "color" && this._paletteEditIndex !== null && this._paletteEditIndex < this._palette.length;
+        const colorDelete = this._slotType === "color" && this._confirmDeletePaletteIndex !== null && this._confirmDeletePaletteIndex < this._palette.length;
+        const hvacEdit = this._slotType === "hvac" && this._hvacEditIndex !== null && this._hvacEditIndex < this._hvacPresets.length;
+        const hvacDelete = this._slotType === "hvac" && this._confirmDeletePresetIndex !== null && this._confirmDeletePresetIndex < this._hvacPresets.length;
+        const brightEdit = this._slotType === "brightness" && this._brightnessEditIndex !== null && this._brightnessEditIndex < this._brightnessPresets.length;
+        const brightDelete = this._slotType === "brightness" && this._confirmDeleteBrightnessIndex !== null && this._confirmDeleteBrightnessIndex < this._brightnessPresets.length;
+        const sceneEdit = this._slotType === "scene" && this._sceneEditIndex !== null && this._sceneEditIndex < this._scenePresets.length;
+        const sceneDelete = this._slotType === "scene" && this._confirmDeleteSceneIndex !== null && this._confirmDeleteSceneIndex < this._scenePresets.length;
+
+        if (!colorEdit && !colorDelete && !hvacEdit && !hvacDelete && !brightEdit && !brightDelete && !sceneEdit && !sceneDelete) {
+            return nothing;
+        }
+
+        const isEditing = colorEdit || hvacEdit || brightEdit || sceneEdit;
+        const title = colorDelete || hvacDelete || brightDelete || sceneDelete
+            ? "Delete Preset"
+            : this._isNewPreset ? "New Preset" : "Edit Preset";
+
+        return html`
+      <div class="modal-backdrop" @click=${(e: Event) => { if (e.target === e.currentTarget) this._closePresetModal(); }}>
+        <div class="modal-panel">
+          <h3>${title}</h3>
+          ${isEditing && !this._isNewPreset ? html`
+            <p class="modal-warning">Changes to this preset will affect all schedules that use it.</p>
+          ` : nothing}
+          ${colorDelete ? this._renderPaletteDeleteConfirm(this._confirmDeletePaletteIndex!) : nothing}
+          ${colorEdit ? this._renderPaletteEditForm(normalizePaletteEntry(this._palette[this._paletteEditIndex!]), this._paletteEditIndex!) : nothing}
+          ${hvacDelete ? this._renderPresetDeleteConfirm(this._confirmDeletePresetIndex!) : nothing}
+          ${hvacEdit ? this._renderHvacEditForm(this._hvacPresets[this._hvacEditIndex!], this._hvacEditIndex!) : nothing}
+          ${brightDelete ? this._renderBrightnessDeleteConfirm(this._confirmDeleteBrightnessIndex!) : nothing}
+          ${brightEdit ? this._renderBrightnessEditForm(this._brightnessPresets[this._brightnessEditIndex!], this._brightnessEditIndex!) : nothing}
+          ${sceneDelete ? this._renderSceneDeleteConfirm(this._confirmDeleteSceneIndex!) : nothing}
+          ${sceneEdit ? this._renderSceneEditForm(this._scenePresets[this._sceneEditIndex!], this._sceneEditIndex!) : nothing}
+        </div>
       </div>
     `;
     }
 
+    private _closePresetModal() {
+        this._paletteEditIndex = null;
+        this._hvacEditIndex = null;
+        this._brightnessEditIndex = null;
+        this._sceneEditIndex = null;
+        this._confirmDeletePaletteIndex = null;
+        this._confirmDeletePresetIndex = null;
+        this._confirmDeleteBrightnessIndex = null;
+        this._confirmDeleteSceneIndex = null;
+        if (this._isNewPreset) {
+            this._cancelNewPreset();
+        }
+        this._isNewPreset = false;
+    }
+
+    // ── Preset event dispatchers from schedule-grid ──
+
+    private _onPresetEdit(index: number) {
+        this._isNewPreset = false;
+        if (this._slotType === "color") this._paletteEditIndex = index;
+        else if (this._slotType === "hvac") this._hvacEditIndex = index;
+        else if (this._slotType === "brightness") this._brightnessEditIndex = index;
+        else if (this._slotType === "scene") this._sceneEditIndex = index;
+    }
+
+    private _onPresetDelete(index: number) {
+        if (this._slotType === "color") this._requestDeletePaletteEntry(index);
+        else if (this._slotType === "hvac") this._requestDeletePreset(index);
+        else if (this._slotType === "brightness") this._requestDeleteBrightnessPreset(index);
+        else if (this._slotType === "scene") this._requestDeleteScenePreset(index);
+    }
+
+    private _onPresetAdd() {
+        this._isNewPreset = true;
+        if (this._slotType === "color") {
+            this._palette = [...this._palette, "#888888"];
+            this._paletteEditIndex = this._palette.length - 1;
+            this._dirty = true;
+        } else if (this._slotType === "hvac") this._addHvacPreset();
+        else if (this._slotType === "brightness") this._addBrightnessPreset();
+        else if (this._slotType === "scene") this._addScenePreset();
+    }
+
+    private _cancelNewPreset() {
+        if (!this._isNewPreset) return;
+        if (this._slotType === "color" && this._paletteEditIndex !== null) {
+            this._palette = this._palette.filter((_, i) => i !== this._paletteEditIndex);
+            this._paletteEditIndex = null;
+        } else if (this._slotType === "hvac" && this._hvacEditIndex !== null) {
+            this._hvacPresets = this._hvacPresets.filter((_, i) => i !== this._hvacEditIndex);
+            this._hvacEditIndex = null;
+        } else if (this._slotType === "brightness" && this._brightnessEditIndex !== null) {
+            this._brightnessPresets = this._brightnessPresets.filter((_, i) => i !== this._brightnessEditIndex);
+            this._brightnessEditIndex = null;
+        } else if (this._slotType === "scene" && this._sceneEditIndex !== null) {
+            this._scenePresets = this._scenePresets.filter((_, i) => i !== this._sceneEditIndex);
+            this._sceneEditIndex = null;
+        }
+        this._isNewPreset = false;
+    }
+
+    /**
+     * Human-readable label for an HVAC preset.
+     * @param preset - HVAC preset object.
+     * @returns Label like "cool 22° / fan: auto".
+     */
     private _hvacPresetLabel(preset: HvacPreset): string {
         const parts: string[] = [];
         if (preset.temperature !== null) parts.push(`${preset.temperature}°`);
@@ -967,6 +1109,11 @@ export class ScheduleEditor extends LitElement {
         return parts.join(" | ") || "Preset";
     }
 
+    /**
+     * Tooltip for an HVAC preset showing all configured attributes.
+     * @param preset - HVAC preset object.
+     * @returns Multi-line tooltip string.
+     */
     private _hvacPresetTooltip(preset: HvacPreset): string {
         const lines: string[] = [];
         if (preset.alias) lines.push(preset.alias);
@@ -976,6 +1123,7 @@ export class ScheduleEditor extends LitElement {
         return lines.join("\n");
     }
 
+    /** Append a default HVAC preset and open its edit form. */
     private _addHvacPreset() {
         this._hvacPresets = [
             ...this._hvacPresets,
@@ -985,6 +1133,11 @@ export class ScheduleEditor extends LitElement {
         this._dirty = true;
     }
 
+    /**
+     * Count how many slots reference an HVAC preset by index.
+     * @param index - Zero-based preset index (slot value = index + 1).
+     * @returns Total slot count across all days.
+     */
     private _presetSlotCount(index: number): number {
         const paletteValue = index + 1;
         let count = 0;
@@ -996,6 +1149,7 @@ export class ScheduleEditor extends LitElement {
         return count;
     }
 
+    /** Render the delete confirmation overlay for an HVAC preset. */
     private _renderPresetDeleteConfirm(index: number) {
         const preset = this._hvacPresets[index];
         const label = preset.alias || this._hvacPresetLabel(preset);
@@ -1031,7 +1185,12 @@ export class ScheduleEditor extends LitElement {
     `;
     }
 
+    /**
+     * Ask for confirmation before deleting a preset, showing usage info.
+     * @param index - Zero-based preset index to delete.
+     */
     private async _requestDeletePreset(index: number) {
+        this._confirmDeletePresetIndex = index;
         try {
             const result = await this.hass.connection.sendMessagePromise({
                 type: "oncue_scheduler/hvac_preset_usage",
@@ -1041,9 +1200,12 @@ export class ScheduleEditor extends LitElement {
         } catch {
             this._confirmDeletePresetUsage = [];
         }
-        this._confirmDeletePresetIndex = index;
     }
 
+    /**
+     * Remove an HVAC preset and rewrite slot references.
+     * @param index - Zero-based preset index to remove.
+     */
     private _doRemoveHvacPreset(index: number) {
         this._confirmDeletePresetIndex = null;
         const removedValue = index + 1;
@@ -1065,6 +1227,11 @@ export class ScheduleEditor extends LitElement {
         this._dirty = true;
     }
 
+    /**
+     * Merge a partial update into an HVAC preset at the given index.
+     * @param index - Zero-based preset index to update.
+     * @param patch - Fields to merge into the preset.
+     */
     private _updateHvacPreset(index: number, patch: Partial<HvacPreset>) {
         const updated = [...this._hvacPresets];
         updated[index] = { ...updated[index], ...patch };
@@ -1072,6 +1239,7 @@ export class ScheduleEditor extends LitElement {
         this._dirty = true;
     }
 
+    /** Render the inline edit form for an HVAC preset. */
     private _renderHvacEditForm(preset: HvacPreset, index: number) {
         return html`
       <div class="hvac-edit-form">
@@ -1157,7 +1325,316 @@ export class ScheduleEditor extends LitElement {
           </div>
         </div>
         <div class="hvac-edit-actions">
-          <button class="secondary" @click=${() => { this._hvacEditIndex = null; }}>Done</button>
+          ${this._isNewPreset ? html`<button class="danger" @click=${() => { this._cancelNewPreset(); }}>Cancel</button>` : nothing}
+          <button class="secondary" @click=${() => { this._hvacEditIndex = null; this._isNewPreset = false; }}>Done</button>
+        </div>
+      </div>
+    `;
+    }
+
+    // ── Brightness preset editing ──
+
+    /** Append a default brightness preset and open its edit form. */
+    private _addBrightnessPreset() {
+        this._brightnessPresets = [
+            ...this._brightnessPresets,
+            { brightness: 128, color: "#ffc107" },
+        ];
+        this._brightnessEditIndex = this._brightnessPresets.length - 1;
+        this._dirty = true;
+    }
+
+    private _updateBrightnessPreset(index: number, patch: Partial<BrightnessPreset>) {
+        const updated = [...this._brightnessPresets];
+        updated[index] = { ...updated[index], ...patch };
+        this._brightnessPresets = updated;
+        this._dirty = true;
+    }
+
+    private async _requestDeleteBrightnessPreset(index: number) {
+        this._confirmDeleteBrightnessIndex = index;
+        try {
+            const result = await this.hass.connection.sendMessagePromise({
+                type: "oncue_scheduler/brightness_preset_usage",
+                index,
+            });
+            this._confirmDeleteBrightnessUsage = result.schedules ?? [];
+        } catch {
+            this._confirmDeleteBrightnessUsage = [];
+        }
+    }
+
+    private _doRemoveBrightnessPreset(index: number) {
+        this._confirmDeleteBrightnessIndex = null;
+        const removedValue = index + 1;
+        const newSlots: Record<string, number[]> = {};
+        for (const [key, arr] of Object.entries(this._slots)) {
+            newSlots[key] = arr.map((v) => {
+                if (v === removedValue) return 0;
+                if (v > removedValue) return v - 1;
+                return v;
+            });
+        }
+        this._slots = newSlots;
+        this._brightnessPresets = this._brightnessPresets.filter((_, i) => i !== index);
+        if (this._brightnessEditIndex !== null) {
+            if (this._brightnessEditIndex === index) this._brightnessEditIndex = null;
+            else if (this._brightnessEditIndex > index) this._brightnessEditIndex--;
+        }
+        this._dirty = true;
+    }
+
+    private _renderBrightnessDeleteConfirm(index: number) {
+        const preset = this._brightnessPresets[index];
+        const label = preset.alias || `${Math.round(preset.brightness / 255 * 100)}%`;
+        const localCount = this._presetSlotCount(index);
+        const usage = this._confirmDeleteBrightnessUsage;
+        const otherSchedules = usage.filter((s) => s.id !== this.schedule?.id);
+        const usedHere = localCount > 0;
+        let usageMsg;
+        if (usedHere && otherSchedules.length > 0) {
+            const names = otherSchedules.map((s) => `'${s.name}'`).join(", ");
+            usageMsg = html`This preset is in use by this schedule and ${names} — affected slots will be cleared.`;
+        } else if (usedHere) {
+            usageMsg = html`This preset is used in <b>${localCount}</b> slot${localCount > 1 ? "s" : ""} in this schedule — they will be cleared.`;
+        } else if (otherSchedules.length > 0) {
+            const names = otherSchedules.map((s) => `'${s.name}'`).join(", ");
+            usageMsg = html`This preset is in use by ${names} — affected slots will be cleared.`;
+        } else {
+            usageMsg = html`This preset is not used in any schedules.`;
+        }
+        return html`
+      <div class="preset-confirm-overlay">
+        <p>Delete brightness preset <b>${label}</b>?</p>
+        <p>${usageMsg}</p>
+        <div class="confirm-actions">
+          <button class="secondary" @click=${() => { this._confirmDeleteBrightnessIndex = null; }}>Cancel</button>
+          <button class="danger" @click=${() => { this._doRemoveBrightnessPreset(index); }}>Delete</button>
+        </div>
+      </div>
+    `;
+    }
+
+    private _renderBrightnessEditForm(preset: BrightnessPreset, index: number) {
+        const pct = Math.round(preset.brightness / 255 * 100);
+        return html`
+      <div class="hvac-edit-form">
+        <div class="form-group">
+          <label>Brightness (${pct}%)</label>
+          <input
+            type="range"
+            min="1"
+            max="255"
+            .value=${String(preset.brightness)}
+            @input=${(e: InputEvent) => {
+                this._updateBrightnessPreset(index, { brightness: parseInt((e.target as HTMLInputElement).value) });
+            }}
+          />
+        </div>
+        <div class="color-alias-row">
+          <div class="form-group">
+            <label>Color</label>
+            <input
+              type="color"
+              .value=${preset.color}
+              @input=${(e: InputEvent) => {
+                this._updateBrightnessPreset(index, { color: (e.target as HTMLInputElement).value });
+            }}
+            />
+          </div>
+          <div class="form-group alias-input">
+            <label>Alias</label>
+            <input
+              type="text"
+              .value=${preset.alias ?? ""}
+              placeholder="e.g. Night Light"
+              @input=${(e: InputEvent) => {
+                this._updateBrightnessPreset(index, { alias: (e.target as HTMLInputElement).value || undefined });
+            }}
+            />
+          </div>
+          <div class="form-group icon-picker-group">
+            <label>Icon</label>
+            <icon-picker
+              .value=${preset.icon ?? ""}
+              @icon-changed=${(e: CustomEvent) => {
+                this._updateBrightnessPreset(index, { icon: e.detail.icon || undefined });
+            }}
+            ></icon-picker>
+          </div>
+        </div>
+        <div class="color-alias-row">
+          <div class="form-group" style="flex:1">
+            <label>Transition</label>
+            <select
+              .value=${preset.transition ?? "snap"}
+              @change=${(e: Event) => {
+                this._updateBrightnessPreset(index, {
+                    transition: (e.target as HTMLSelectElement).value as "snap" | "crossfade",
+                });
+            }}
+            >
+              <option value="snap">Snap</option>
+              <option value="crossfade">Cross-fade</option>
+            </select>
+          </div>
+        </div>
+        ${preset.transition === "crossfade" ? html`
+          <div class="palette-mode-help">
+            Gradually fades from this brightness to the next slot's brightness over the time block.
+          </div>
+        ` : nothing}
+        <div class="hvac-edit-actions">
+          ${this._isNewPreset ? html`<button class="danger" @click=${() => { this._cancelNewPreset(); }}>Cancel</button>` : nothing}
+          <button class="secondary" @click=${() => { this._brightnessEditIndex = null; this._isNewPreset = false; }}>Done</button>
+        </div>
+      </div>
+    `;
+    }
+
+    // ── Scene preset editing ──
+
+    /** Append a default scene preset and open its edit form. */
+    private _addScenePreset() {
+        this._scenePresets = [
+            ...this._scenePresets,
+            { scene_id: "", name: "New Scene", color: "#7c4dff" },
+        ];
+        this._sceneEditIndex = this._scenePresets.length - 1;
+        this._dirty = true;
+    }
+
+    private _updateScenePreset(index: number, patch: Partial<ScenePreset>) {
+        const updated = [...this._scenePresets];
+        updated[index] = { ...updated[index], ...patch };
+        this._scenePresets = updated;
+        this._dirty = true;
+    }
+
+    private async _requestDeleteScenePreset(index: number) {
+        this._confirmDeleteSceneIndex = index;
+        try {
+            const result = await this.hass.connection.sendMessagePromise({
+                type: "oncue_scheduler/scene_preset_usage",
+                index,
+            });
+            this._confirmDeleteSceneUsage = result.schedules ?? [];
+        } catch {
+            this._confirmDeleteSceneUsage = [];
+        }
+    }
+
+    private _doRemoveScenePreset(index: number) {
+        this._confirmDeleteSceneIndex = null;
+        const removedValue = index + 1;
+        const newSlots: Record<string, number[]> = {};
+        for (const [key, arr] of Object.entries(this._slots)) {
+            newSlots[key] = arr.map((v) => {
+                if (v === removedValue) return 0;
+                if (v > removedValue) return v - 1;
+                return v;
+            });
+        }
+        this._slots = newSlots;
+        this._scenePresets = this._scenePresets.filter((_, i) => i !== index);
+        if (this._sceneEditIndex !== null) {
+            if (this._sceneEditIndex === index) this._sceneEditIndex = null;
+            else if (this._sceneEditIndex > index) this._sceneEditIndex--;
+        }
+        this._dirty = true;
+    }
+
+    private _renderSceneDeleteConfirm(index: number) {
+        const preset = this._scenePresets[index];
+        const label = preset.alias || preset.name;
+        const localCount = this._presetSlotCount(index);
+        const usage = this._confirmDeleteSceneUsage;
+        const otherSchedules = usage.filter((s) => s.id !== this.schedule?.id);
+        const usedHere = localCount > 0;
+        let usageMsg;
+        if (usedHere && otherSchedules.length > 0) {
+            const names = otherSchedules.map((s) => `'${s.name}'`).join(", ");
+            usageMsg = html`This preset is in use by this schedule and ${names} — affected slots will be cleared.`;
+        } else if (usedHere) {
+            usageMsg = html`This preset is used in <b>${localCount}</b> slot${localCount > 1 ? "s" : ""} in this schedule — they will be cleared.`;
+        } else if (otherSchedules.length > 0) {
+            const names = otherSchedules.map((s) => `'${s.name}'`).join(", ");
+            usageMsg = html`This preset is in use by ${names} — affected slots will be cleared.`;
+        } else {
+            usageMsg = html`This preset is not used in any schedules.`;
+        }
+        return html`
+      <div class="preset-confirm-overlay">
+        <p>Delete scene preset <b>${label}</b>?</p>
+        <p>${usageMsg}</p>
+        <div class="confirm-actions">
+          <button class="secondary" @click=${() => { this._confirmDeleteSceneIndex = null; }}>Cancel</button>
+          <button class="danger" @click=${() => { this._doRemoveScenePreset(index); }}>Delete</button>
+        </div>
+      </div>
+    `;
+    }
+
+    private _renderSceneEditForm(preset: ScenePreset, index: number) {
+        return html`
+      <div class="hvac-edit-form">
+        <div class="form-group">
+          <label>Scene Entity ID</label>
+          <input
+            type="text"
+            .value=${preset.scene_id}
+            placeholder="scene.my_scene"
+            @input=${(e: InputEvent) => {
+                this._updateScenePreset(index, { scene_id: (e.target as HTMLInputElement).value });
+            }}
+          />
+        </div>
+        <div class="form-group">
+          <label>Name</label>
+          <input
+            type="text"
+            .value=${preset.name}
+            placeholder="Scene name"
+            @input=${(e: InputEvent) => {
+                this._updateScenePreset(index, { name: (e.target as HTMLInputElement).value });
+            }}
+          />
+        </div>
+        <div class="color-alias-row">
+          <div class="form-group">
+            <label>Color</label>
+            <input
+              type="color"
+              .value=${preset.color}
+              @input=${(e: InputEvent) => {
+                this._updateScenePreset(index, { color: (e.target as HTMLInputElement).value });
+            }}
+            />
+          </div>
+          <div class="form-group alias-input">
+            <label>Alias</label>
+            <input
+              type="text"
+              .value=${preset.alias ?? ""}
+              placeholder="e.g. Movie Night"
+              @input=${(e: InputEvent) => {
+                this._updateScenePreset(index, { alias: (e.target as HTMLInputElement).value || undefined });
+            }}
+            />
+          </div>
+          <div class="form-group icon-picker-group">
+            <label>Icon</label>
+            <icon-picker
+              .value=${preset.icon ?? ""}
+              @icon-changed=${(e: CustomEvent) => {
+                this._updateScenePreset(index, { icon: e.detail.icon || undefined });
+            }}
+            ></icon-picker>
+          </div>
+        </div>
+        <div class="hvac-edit-actions">
+          ${this._isNewPreset ? html`<button class="danger" @click=${() => { this._cancelNewPreset(); }}>Cancel</button>` : nothing}
+          <button class="secondary" @click=${() => { this._sceneEditIndex = null; this._isNewPreset = false; }}>Done</button>
         </div>
       </div>
     `;
@@ -1165,6 +1642,11 @@ export class ScheduleEditor extends LitElement {
 
     // ── Palette entry editing ──
 
+    /**
+     * Short badge label for a palette entry's animation mode.
+     * @param mode - Mode string.
+     * @returns Single-letter badge or empty string for solid.
+     */
     private _paletteModeBadge(mode: string): string {
         switch (mode) {
             case "crossfade": return "⇢";
@@ -1174,6 +1656,11 @@ export class ScheduleEditor extends LitElement {
         }
     }
 
+    /**
+     * Tooltip for a palette entry showing mode and cycle parameters.
+     * @param entry - Normalized palette entry object.
+     * @returns Multi-line tooltip string.
+     */
     private _paletteEntryTooltip(entry: PaletteEntryObject): string {
         const lines: string[] = [];
         if (entry.mode === "cycle" && entry.alias) lines.push(entry.alias);
@@ -1187,6 +1674,7 @@ export class ScheduleEditor extends LitElement {
         return lines.join("\n");
     }
 
+    /** Render the delete confirmation overlay for a palette entry. */
     private _renderPaletteDeleteConfirm(index: number) {
         const norm = normalizePaletteEntry(this._palette[index]);
         const label = (norm.mode === "cycle" && norm.alias) ? norm.alias : norm.color;
@@ -1221,7 +1709,12 @@ export class ScheduleEditor extends LitElement {
     `;
     }
 
+    /**
+     * Ask for confirmation before deleting a palette entry, showing usage info.
+     * @param index - Zero-based palette index to delete.
+     */
     private async _requestDeletePaletteEntry(index: number) {
+        this._confirmDeletePaletteIndex = index;
         try {
             const result = await this.hass.connection.sendMessagePromise({
                 type: "oncue_scheduler/color_preset_usage",
@@ -1231,9 +1724,13 @@ export class ScheduleEditor extends LitElement {
         } catch {
             this._confirmDeletePaletteUsage = [];
         }
-        this._confirmDeletePaletteIndex = index;
     }
 
+    /**
+     * Count how many slots reference a palette entry by index.
+     * @param index - Zero-based palette index (slot value = index + 1).
+     * @returns Total slot count across all days.
+     */
     private _paletteSlotCount(index: number): number {
         const paletteValue = index + 1;
         let count = 0;
@@ -1245,6 +1742,10 @@ export class ScheduleEditor extends LitElement {
         return count;
     }
 
+    /**
+     * Remove a palette entry and rewrite slot references.
+     * @param index - Zero-based palette index to remove.
+     */
     private _doRemovePaletteEntry(index: number) {
         this._confirmDeletePaletteIndex = null;
         const removedValue = index + 1;
@@ -1265,6 +1766,11 @@ export class ScheduleEditor extends LitElement {
         this._dirty = true;
     }
 
+    /**
+     * Merge a partial update into a palette entry at the given index.
+     * @param index - Zero-based palette index to update.
+     * @param patch - Fields to merge into the normalized entry.
+     */
     private _updatePaletteEntry(index: number, patch: Partial<PaletteEntryObject>) {
         const updated = [...this._palette];
         const norm = normalizePaletteEntry(updated[index]);
@@ -1273,6 +1779,7 @@ export class ScheduleEditor extends LitElement {
         this._dirty = true;
     }
 
+    /** Render the inline edit form for a palette entry. */
     private _renderPaletteEditForm(entry: PaletteEntryObject, index: number) {
         const maxRate = entry.colors && entry.colors.length >= 2
             ? Math.floor(900 / (entry.colors.length * 5))
@@ -1402,12 +1909,14 @@ export class ScheduleEditor extends LitElement {
         ` : nothing}
 
         <div class="hvac-edit-actions">
-          <button class="secondary" @click=${() => { this._paletteEditIndex = null; }}>Done</button>
+          ${this._isNewPreset ? html`<button class="danger" @click=${() => { this._cancelNewPreset(); }}>Cancel</button>` : nothing}
+          <button class="secondary" @click=${() => { this._paletteEditIndex = null; this._isNewPreset = false; }}>Done</button>
         </div>
       </div>
     `;
     }
 
+    /** Re-derive custom cadence slot keys from the date range. */
     private _rebuildCustomSlots() {
         if (!this._startDate || !this._endDate) return;
         const dates = dateRange(this._startDate, this._endDate);
@@ -1418,6 +1927,7 @@ export class ScheduleEditor extends LitElement {
         this._slots = newSlots;
     }
 
+    /** Validate and save the schedule to the backend. */
     private async _onSave() {
         if (!this._name.trim()) {
             this._showToast("Name is required", "error");
@@ -1444,6 +1954,22 @@ export class ScheduleEditor extends LitElement {
                 await this.hass.connection.sendMessagePromise({
                     type: "oncue_scheduler/save_color_presets",
                     color_presets: this._palette,
+                });
+            }
+
+            // Save brightness presets globally before saving the schedule
+            if (this._slotType === "brightness") {
+                await this.hass.connection.sendMessagePromise({
+                    type: "oncue_scheduler/save_brightness_presets",
+                    brightness_presets: this._brightnessPresets,
+                });
+            }
+
+            // Save scene presets globally before saving the schedule
+            if (this._slotType === "scene") {
+                await this.hass.connection.sendMessagePromise({
+                    type: "oncue_scheduler/save_scene_presets",
+                    scene_presets: this._scenePresets,
                 });
             }
 
@@ -1495,6 +2021,7 @@ export class ScheduleEditor extends LitElement {
         }
     }
 
+    /** Discard changes and fire cancel event. */
     private _onCancel() {
         if (this._dirty) {
             this._confirmDiscard = true;
@@ -1505,11 +2032,13 @@ export class ScheduleEditor extends LitElement {
         );
     }
 
+    /** Toggle the schedule's active/paused state. */
     private _toggleActive() {
         this._active = !this._active;
         this._dirty = true;
     }
 
+    /** Fetch override states and scheduled states for the current schedule. */
     private async _loadOverrides() {
         if (!this.schedule?.id) {
             this._overrides = {};
@@ -1532,6 +2061,7 @@ export class ScheduleEditor extends LitElement {
         }
     }
 
+    /** Apply an entity override via WebSocket. */
     private async _onOverrideSet(e: CustomEvent) {
         if (!this.schedule?.id) return;
         const { entityId, state } = e.detail;
@@ -1549,6 +2079,7 @@ export class ScheduleEditor extends LitElement {
         }
     }
 
+    /** Clear an entity override via WebSocket. */
     private async _onOverrideClear(e: CustomEvent) {
         if (!this.schedule?.id) return;
         const { entityId } = e.detail;
@@ -1567,6 +2098,7 @@ export class ScheduleEditor extends LitElement {
         }
     }
 
+    /** Discard unsaved changes and close the editor. */
     private _doDiscard() {
         this._confirmDiscard = false;
         this._dirty = false;
@@ -1575,11 +2107,13 @@ export class ScheduleEditor extends LitElement {
         );
     }
 
+    /** Show the delete confirmation dialog. */
     private _onDelete() {
         if (!this.schedule?.id) return;
         this._confirmDelete = true;
     }
 
+    /** Delete the schedule after user confirmation. */
     private async _doDelete() {
         if (!this.schedule?.id) return;
         this._confirmDelete = false;

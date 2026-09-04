@@ -3,6 +3,7 @@ import { customElement, property } from "lit/decorators.js";
 import { sharedStyles } from "./styles";
 import type { ScheduleSummary } from "./types";
 
+/** Sidebar list of schedule summaries with add/select/toggle controls. */
 @customElement("schedule-list")
 export class ScheduleList extends LitElement {
     @property({ type: Array }) schedules: ScheduleSummary[] = [];
@@ -139,18 +140,28 @@ export class ScheduleList extends LitElement {
     `;
     }
 
+    /**
+     * Fire schedule-selected event.
+     * @param id - Schedule ID that was selected.
+     */
     private _onSelect(id: string) {
         this.dispatchEvent(
             new CustomEvent("schedule-selected", { detail: { id }, bubbles: true, composed: true })
         );
     }
 
+    /** Fire schedule-add event. */
     private _onAdd() {
         this.dispatchEvent(
             new CustomEvent("schedule-add", { bubbles: true, composed: true })
         );
     }
 
+    /**
+     * Fire schedule-toggle-active event with the new state.
+     * @param id - Schedule ID to toggle.
+     * @param active - Desired active state.
+     */
     private _onToggleActive(id: string, active: boolean) {
         this.dispatchEvent(
             new CustomEvent("schedule-toggle-active", {

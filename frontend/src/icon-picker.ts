@@ -55,6 +55,7 @@ const ICON_LIST: string[] = [
     "mdi:car", "mdi:walk", "mdi:bike",
 ];
 
+/** MDI icon picker with search and dropdown selection. */
 @customElement("icon-picker")
 export class IconPicker extends LitElement {
     @property({ type: String }) value = "";
@@ -144,6 +145,7 @@ export class IconPicker extends LitElement {
     `,
     ];
 
+    /** Icons matching the current search query. */
     private get _filtered(): string[] {
         const q = this._query.toLowerCase().replace(/^mdi:/, "");
         if (!q) return ICON_LIST;
@@ -172,6 +174,7 @@ export class IconPicker extends LitElement {
     `;
     }
 
+    /** Render the icon search results dropdown. */
     private _renderDropdown() {
         const items = this._filtered;
         return html`
@@ -190,16 +193,19 @@ export class IconPicker extends LitElement {
     `;
     }
 
+    /** Open the dropdown and seed the query with the current value. */
     private _onFocus() {
         this._query = this.value || "";
         this._open = true;
     }
 
+    /** Update the search query from the input field. */
     private _onInput(e: InputEvent) {
         this._query = (e.target as HTMLInputElement).value;
         if (!this._open) this._open = true;
     }
 
+    /** Handle Escape to close and Enter to auto-select. */
     private _onKeydown(e: KeyboardEvent) {
         if (e.key === "Escape") {
             this._open = false;
@@ -216,18 +222,27 @@ export class IconPicker extends LitElement {
         }
     }
 
+    /**
+     * Select an icon and close the dropdown.
+     * @param icon - MDI icon name to select.
+     */
     private _select(icon: string) {
         this._open = false;
         this._query = "";
         this._fireChange(icon);
     }
 
+    /** Clear the selected icon. */
     private _clear() {
         this._open = false;
         this._query = "";
         this._fireChange("");
     }
 
+    /**
+     * Dispatch an icon-changed event with the new icon value.
+     * @param icon - New icon name, or empty string to clear.
+     */
     private _fireChange(icon: string) {
         this.dispatchEvent(
             new CustomEvent("icon-changed", {
@@ -248,6 +263,7 @@ export class IconPicker extends LitElement {
         document.removeEventListener("click", this._onDocClick);
     }
 
+    /** Close the dropdown when clicking outside the component. */
     private _onDocClick = (e: MouseEvent) => {
         if (this._open && !this.renderRoot.contains(e.target as Node) && !this.contains(e.target as Node)) {
             this._open = false;

@@ -8,6 +8,8 @@ from .const import (
     SLOT_TYPE_ON_OFF,
     SLOT_TYPE_COLOR,
     SLOT_TYPE_HVAC,
+    SLOT_TYPE_BRIGHTNESS,
+    SLOT_TYPE_SCENE,
     VALID_SLOT_TYPES,
     VALID_HVAC_MODES,
     VALID_FAN_MODES,
@@ -21,7 +23,12 @@ from .const import (
 
 
 def validate_slot_value(value: Any, slot_type: str) -> str | None:
-    """Return error string if value is invalid for the slot type, or None."""
+    """Validate a single slot value for the given slot type.
+
+    :param value: The slot value to validate.
+    :param slot_type: One of SLOT_TYPE_ON_OFF, SLOT_TYPE_COLOR, SLOT_TYPE_HVAC.
+    :returns: Error string if invalid, or None if valid.
+    """
     if slot_type not in VALID_SLOT_TYPES:
         return f"unknown slot_type '{slot_type}'"
 
@@ -37,11 +44,23 @@ def validate_slot_value(value: Any, slot_type: str) -> str | None:
         if not isinstance(value, int) or value < 0:
             return f"hvac slot value must be a non-negative integer (preset index), got {value!r}"
 
+    if slot_type == SLOT_TYPE_BRIGHTNESS:
+        if not isinstance(value, int) or value < 0:
+            return f"brightness slot value must be a non-negative integer (preset index), got {value!r}"
+
+    if slot_type == SLOT_TYPE_SCENE:
+        if not isinstance(value, int) or value < 0:
+            return f"scene slot value must be a non-negative integer (preset index), got {value!r}"
+
     return None
 
 
 def validate_palette(palette: Any) -> str | None:
-    """Return error string if palette is invalid, or None."""
+    """Validate a color palette list.
+
+    :param palette: List of hex color strings or palette entry objects.
+    :returns: Error string if invalid, or None if valid.
+    """
     if not isinstance(palette, list):
         return "palette must be a list"
     for i, entry in enumerate(palette):
@@ -58,7 +77,12 @@ def validate_palette(palette: Any) -> str | None:
 
 
 def _validate_palette_entry_object(entry: dict[str, Any], index: int) -> str | None:
-    """Validate a palette entry object with mode/color/etc."""
+    """Validate a palette entry object with mode/color/etc.
+
+    :param entry: Palette entry dict with mode, color, and mode-specific fields.
+    :param index: Position in the palette (for error messages).
+    :returns: Error string if invalid, or None if valid.
+    """
     mode = entry.get("mode")
     if mode not in VALID_PALETTE_MODES:
         return f"palette[{index}].mode must be one of {VALID_PALETTE_MODES}"
@@ -91,7 +115,12 @@ def _validate_palette_entry_object(entry: dict[str, Any], index: int) -> str | N
 
 
 def validate_hvac_presets(presets: Any) -> str | None:
-    """Return error string if HVAC presets list is invalid, or None."""
+    """Validate an HVAC presets list.
+
+    :param presets: List of HVAC preset dicts with temperature, hvac_mode,
+        fan_mode, and color fields.
+    :returns: Error string if invalid, or None if valid.
+    """
     if not isinstance(presets, list):
         return "hvac_presets must be a list"
     for i, entry in enumerate(presets):
@@ -113,7 +142,11 @@ def validate_hvac_presets(presets: Any) -> str | None:
 
 
 def _is_valid_hex_color(s: str) -> bool:
-    """Check if string is a valid 6-digit hex color like '#ff00aa'."""
+    """Check if string is a valid 6-digit hex color like '#ff00aa'.
+
+    :param s: String to validate.
+    :returns: True if the string is a valid 7-character hex colour (#rrggbb).
+    """
     if len(s) != 7 or s[0] != "#":
         return False
     try:
@@ -124,7 +157,11 @@ def _is_valid_hex_color(s: str) -> bool:
 
 
 def hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
-    """Convert '#rrggbb' to (r, g, b) tuple."""
+    """Convert '#rrggbb' to an (r, g, b) tuple.
+
+    :param hex_color: 7-character hex color string (e.g. '#ff00aa').
+    :returns: Tuple of (red, green, blue) integers in 0-255.
+    """
     val = int(hex_color[1:], 16)
     return (val >> 16) & 0xFF, (val >> 8) & 0xFF, val & 0xFF
 
@@ -134,8 +171,20 @@ def interpret_slot_value(
     slot_type: str,
     palette: list[str | dict[str, Any]] | None = None,
     hvac_presets: list[dict[str, Any]] | None = None,
+    brightness_presets: list[dict[str, Any]] | None = None,
+    scene_presets: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Return an action dict for the given slot value and type."""
+    """Return an action dict for the given slot value and type.
+
+    Value 0 means off/none; 1..N are 1-based indices into the preset list.
+
+    :param value: Slot value (0 = off/none, 1..N = preset index).
+    :param slot_type: One of SLOT_TYPE_ON_OFF, SLOT_TYPE_COLOR, SLOT_TYPE_HVAC.
+    :param palette: Color presets list (required for color slot type).
+    :param hvac_presets: HVAC presets list (required for HVAC slot type).
+    :returns: Action dict with at minimum an "action" key. Possible actions:
+        "turn_on", "turn_off", "set_color", "set_hvac", or "none".
+    """
     if slot_type == SLOT_TYPE_ON_OFF:
         if value == 1:
             return {"action": "turn_on"}
@@ -197,11 +246,80 @@ def interpret_slot_value(
             return result
         return {"action": "none"}
 
+    if slot_type == SLOT_TYPE_BRIGHTNESS:
+        if value == 0:
+            return {"action": "none"}
+        if brightness_presets and 1 <= value <= len(brightness_presets):
+            preset = brightness_presets[value - 1]
+            result_b: dict[str, Any] = {"action": "set_brightness", "brightness": preset["brightness"]}
+            if preset.get("transition") == "crossfade":
+                result_b["brightness_mode"] = "crossfade"
+            return result_b
+        return {"action": "none"}
+
+    if slot_type == SLOT_TYPE_SCENE:
+        if value == 0:
+            return {"action": "none"}
+        if scene_presets and 1 <= value <= len(scene_presets):
+            preset = scene_presets[value - 1]
+            return {"action": "activate_scene", "scene_id": preset["scene_id"]}
+        return {"action": "none"}
+
     return {"action": "none"}
 
 
+def validate_brightness_presets(presets: Any) -> str | None:
+    """Validate a brightness presets list.
+
+    :param presets: List of brightness preset dicts with brightness and color fields.
+    :returns: Error string if invalid, or None if valid.
+    """
+    if not isinstance(presets, list):
+        return "brightness_presets must be a list"
+    for i, entry in enumerate(presets):
+        if not isinstance(entry, dict):
+            return f"brightness_presets[{i}] must be an object"
+        brightness = entry.get("brightness")
+        if not isinstance(brightness, int) or not (1 <= brightness <= 255):
+            return f"brightness_presets[{i}].brightness must be an integer 1-255"
+        color = entry.get("color")
+        if not isinstance(color, str) or not _is_valid_hex_color(color):
+            return f"brightness_presets[{i}].color must be a valid hex color"
+        transition = entry.get("transition")
+        if transition is not None and transition not in ("snap", "crossfade"):
+            return f"brightness_presets[{i}].transition must be 'snap' or 'crossfade'"
+    return None
+
+
+def validate_scene_presets(presets: Any) -> str | None:
+    """Validate a scene presets list.
+
+    :param presets: List of scene preset dicts with scene_id, name, and color fields.
+    :returns: Error string if invalid, or None if valid.
+    """
+    if not isinstance(presets, list):
+        return "scene_presets must be a list"
+    for i, entry in enumerate(presets):
+        if not isinstance(entry, dict):
+            return f"scene_presets[{i}] must be an object"
+        scene_id = entry.get("scene_id")
+        if not isinstance(scene_id, str) or not scene_id:
+            return f"scene_presets[{i}].scene_id must be a non-empty string"
+        name = entry.get("name")
+        if not isinstance(name, str) or not name:
+            return f"scene_presets[{i}].name must be a non-empty string"
+        color = entry.get("color")
+        if not isinstance(color, str) or not _is_valid_hex_color(color):
+            return f"scene_presets[{i}].color must be a valid hex color"
+    return None
+
+
 def normalize_palette_entry(entry: str | dict[str, Any]) -> dict[str, Any]:
-    """Normalize a palette entry (string or object) into object form."""
+    """Normalize a palette entry (string or object) into object form.
+
+    :param entry: Hex color string or palette entry dict.
+    :returns: Dict with at least 'mode' and 'color' keys.
+    """
     if isinstance(entry, str):
         return {"mode": "solid", "color": entry}
     return entry
@@ -210,7 +328,13 @@ def normalize_palette_entry(entry: str | dict[str, Any]) -> dict[str, Any]:
 def _lerp_rgb(
     c1: list[int], c2: list[int], t: float
 ) -> list[int]:
-    """Linear interpolation between two RGB colours, t in [0, 1]."""
+    """Linear interpolation between two RGB colours.
+
+    :param c1: Start colour as [r, g, b].
+    :param c2: End colour as [r, g, b].
+    :param t: Interpolation factor in [0, 1], clamped.
+    :returns: Interpolated colour as [r, g, b].
+    """
     t = max(0.0, min(1.0, t))
     return [int(c1[i] + (c2[i] - c1[i]) * t) for i in range(3)]
 
@@ -226,7 +350,19 @@ def compute_animated_color(
     cycle_rate: float = 1.0,
     tv_colors: list[list[int]] | None = None,
 ) -> list[int]:
-    """Compute the RGB color at a given point within a slot for animated modes."""
+    """Compute the RGB color at a given point within a slot.
+
+    :param color_mode: Animation mode ("crossfade", "cycle", or "tv").
+    :param elapsed_seconds: Seconds elapsed since the slot started.
+    :param slot_seconds: Total duration of the slot in seconds.
+    :param current_rgb: Base RGB colour for this slot as [r, g, b].
+    :param next_rgb: RGB colour of the next slot (used by crossfade).
+    :param cycle_colors: List of RGB colours to cycle through.
+    :param cycle_transition: Transition style, "snap" or "fade".
+    :param cycle_rate: Number of full cycles per slot.
+    :param tv_colors: Colour palette for TV simulation mode.
+    :returns: Computed RGB colour as [r, g, b].
+    """
     t = elapsed_seconds / slot_seconds if slot_seconds > 0 else 0.0
 
     if color_mode == "crossfade":
@@ -252,19 +388,47 @@ def compute_animated_color(
     return list(current_rgb)
 
 
+def compute_animated_brightness(
+    elapsed_seconds: float,
+    slot_seconds: float,
+    current_brightness: int,
+    next_brightness: int | None = None,
+) -> int:
+    """Compute interpolated brightness for crossfade between slots.
+
+    :param elapsed_seconds: Seconds elapsed since the slot started.
+    :param slot_seconds: Total duration of the slot in seconds.
+    :param current_brightness: Brightness value for the current slot (1-255).
+    :param next_brightness: Brightness value for the next slot (1-255), or None.
+    :returns: Interpolated brightness value as an integer (1-255).
+    """
+    t = elapsed_seconds / slot_seconds if slot_seconds > 0 else 0.0
+    target = next_brightness if next_brightness is not None else current_brightness
+    return max(1, min(255, round(current_brightness + (target - current_brightness) * t)))
+
+
 def _compute_tv_color(
     elapsed_seconds: float,
     slot_seconds: float,
     colors: list[list[int]],
 ) -> list[int]:
-    """Pseudo-random TV-like colour sequencing with snaps and fades."""
+    """Pseudo-random TV-like colour sequencing with snaps and fades.
+
+    Uses a deterministic LCG to produce repeatable segment durations
+    and colour selections for a given elapsed time.
+
+    :param elapsed_seconds: Seconds elapsed since the slot started.
+    :param slot_seconds: Total slot duration in seconds.
+    :param colors: Colour palette as list of [r, g, b] lists.
+    :returns: Current frame colour as [r, g, b].
+    """
     n = len(colors)
     segment_start = 0.0
     seed = 0
     while segment_start < slot_seconds:
-        # Deterministic segment duration 2-6 seconds
+        # LCG step (glibc constants) for deterministic pseudo-random sequencing
         seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
-        duration = 2.0 + (seed % 500) / 100.0  # 2.0 - 6.99s
+        duration = 2.0 + (seed % 500) / 100.0  # 2.0 - 6.99 seconds per segment
         segment_end = segment_start + duration
         if elapsed_seconds < segment_end or segment_end >= slot_seconds:
             color_idx = seed % n

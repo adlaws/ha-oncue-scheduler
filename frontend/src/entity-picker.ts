@@ -36,6 +36,7 @@ const DOMAIN_ICON_PATHS: Record<string, { on: string; off: string }> = {
 };
 const DEFAULT_ICON_PATH = "M20.5 11H19V7c0-1.1-.9-2-2-2h-4V3.5a2.5 2.5 0 0 0-5 0V5H4c-1.1 0-2 .9-2 2v3.8h1.5c1.4 0 2.5 1.1 2.5 2.5S4.9 15.8 3.5 15.8H2V19c0 1.1.9 2 2 2h3.8v-1.5c0-1.4 1.1-2.5 2.5-2.5s2.5 1.1 2.5 2.5V21H17c1.1 0 2-.9 2-2v-4h1.5a2.5 2.5 0 0 0 0-5Z";
 
+/** Entity selection widget with search, override controls, and compatibility checks. */
 @customElement("entity-picker")
 export class EntityPicker extends LitElement {
     @property({ attribute: false }) hass!: HomeAssistant;
@@ -239,6 +240,11 @@ export class EntityPicker extends LitElement {
     `,
     ];
 
+    /**
+     * Check whether an entity supports the current slot type.
+     * @param id - Entity ID to check.
+     * @returns True if the entity's domain and capabilities match.
+     */
     private _isEntityCompatible(id: string): boolean {
         const domain = id.split(".")[0];
         if (this.slotType === "color") {
@@ -249,9 +255,20 @@ export class EntityPicker extends LitElement {
         if (this.slotType === "hvac") {
             return domain === "climate";
         }
+        if (this.slotType === "brightness") {
+            return domain === "light" || domain === "fan";
+        }
+        if (this.slotType === "scene") {
+            return SUPPORTED_DOMAINS.includes(domain);
+        }
         return SUPPORTED_DOMAINS.includes(domain);
     }
 
+    /**
+     * Human-readable reason why an entity is incompatible.
+     * @param id - Entity ID.
+     * @returns Short explanation string.
+     */
     private _incompatibleReason(id: string): string {
         const domain = id.split(".")[0];
         const domainLabel = domain.replace("_", " ");
@@ -262,9 +279,13 @@ export class EntityPicker extends LitElement {
         if (this.slotType === "hvac") {
             return `${domainLabel} does not support HVAC states`;
         }
+        if (this.slotType === "brightness") {
+            return `${domainLabel} does not support brightness`;
+        }
         return "incompatible";
     }
 
+    /** Compatible entities not already selected, sorted by ID. */
     private get _availableEntities(): { id: string; name: string }[] {
         if (!this.hass?.states) return [];
         const selected = new Set(this.selectedIds);
@@ -280,6 +301,7 @@ export class EntityPicker extends LitElement {
             .sort((a, b) => a.id.localeCompare(b.id));
     }
 
+    /** Available entities filtered by the current search query. */
     private get _filtered(): { id: string; name: string }[] {
         const q = this._query.toLowerCase();
         if (!q) return this._availableEntities;
@@ -307,6 +329,7 @@ export class EntityPicker extends LitElement {
     `;
     }
 
+    /** Render a single entity row with status indicators and override controls. */
     private _renderEntityRow(id: string) {
         const override = this.overrides[id];
         const scheduled = this.scheduledStates[id];
@@ -338,7 +361,7 @@ export class EntityPicker extends LitElement {
         </span>
         ${isUnavailable ? html`<span class="unavailable-badge">unavailable</span>` : nothing}
         ${isIncompatible ? html`<span class="incompatible-badge" title=${this._incompatibleReason(id)}>${this._incompatibleReason(id)}</span>` : nothing}
-        ${this.showOverrides && this.slotType !== "color" ? html`
+        ${this.showOverrides && this.slotType !== "color" && this.slotType !== "brightness" && this.slotType !== "scene" ? html`
           <span class="override-controls">
             <button
               class="override-btn ${onClass}"
@@ -357,6 +380,7 @@ export class EntityPicker extends LitElement {
     `;
     }
 
+    /** Render the search results dropdown. */
     private _renderDropdown() {
         const items = this._filtered;
         if (items.length === 0) {
@@ -376,10 +400,20 @@ export class EntityPicker extends LitElement {
     `;
     }
 
+    /**
+     * Get the friendly name for an entity, falling back to the entity ID.
+     * @param id - Entity ID.
+     * @returns Display name.
+     */
     private _friendlyName(id: string): string {
         return this.hass?.states?.[id]?.attributes?.friendly_name ?? id;
     }
 
+    /**
+     * Get the icon for an entity — custom icon from attributes, or domain default.
+     * @param id - Entity ID.
+     * @returns MDI icon name or inline SVG path data.
+     */
     private _entityIcon(id: string): string {
         const domain = id.split(".")[0];
         const entityState = this.hass?.states?.[id];
@@ -390,6 +424,7 @@ export class EntityPicker extends LitElement {
         return paths ? (isOn ? paths.on : paths.off) : DEFAULT_ICON_PATH;
     }
 
+    /** Render the entity icon — custom HA icon or SVG domain default. */
     private _renderEntityIcon(id: string) {
         const entityState = this.hass?.states?.[id];
         const customIcon = entityState?.attributes?.icon;
@@ -403,27 +438,37 @@ export class EntityPicker extends LitElement {
         return html`<svg class="entity-icon ${stateClass}" viewBox="0 0 24 24"><path d=${path}/></svg>`;
     }
 
+    /** Update the search query from the input field. */
     private _onInput(e: InputEvent) {
         this._query = (e.target as HTMLInputElement).value;
         this._open = true;
     }
 
+    /** Close the dropdown after a short delay to allow option clicks. */
     private _onBlur() {
         // Delay to allow mousedown on option to fire first
         setTimeout(() => { this._open = false; }, 150);
     }
 
+    /** Add an entity to the selection. */
     private _select(id: string) {
         const updated = [...this.selectedIds, id];
         this._query = "";
         this._fireChanged(updated);
     }
 
+    /** Remove an entity from the selection. */
     private _remove(id: string) {
         const updated = this.selectedIds.filter((eid) => eid !== id);
         this._fireChanged(updated);
     }
 
+    /**
+     * Toggle or set an override for an entity.
+     * If already set to the same state, clears it instead.
+     * @param id - Entity ID.
+     * @param state - Desired override state, "on" or "off".
+     */
     private _onOverride(id: string, state: string) {
         // Toggle: if already set to this state, clear it; otherwise set it
         const current = this.overrides[id];
@@ -446,6 +491,10 @@ export class EntityPicker extends LitElement {
         }
     }
 
+    /**
+     * Dispatch an entities-changed event with the updated ID list.
+     * @param ids - New array of selected entity IDs.
+     */
     private _fireChanged(ids: string[]) {
         this.dispatchEvent(
             new CustomEvent("entities-changed", {

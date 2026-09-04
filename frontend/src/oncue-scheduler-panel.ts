@@ -1,10 +1,11 @@
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles } from "./styles";
-import type { Schedule, ScheduleSummary, HomeAssistant, HvacPreset, PaletteEntry } from "./types";
+import type { Schedule, ScheduleSummary, HomeAssistant, HvacPreset, PaletteEntry, BrightnessPreset, ScenePreset } from "./types";
 import "./schedule-list";
 import "./schedule-editor";
 
+/** Top-level panel component — sidebar schedule list + main editor area. */
 @customElement("oncue-scheduler-panel")
 export class OnCuePanel extends LitElement {
     @property({ attribute: false }) hass!: HomeAssistant;
@@ -18,6 +19,8 @@ export class OnCuePanel extends LitElement {
     @state() private _sidebarOpen = true;
     @state() private _hvacPresets: HvacPreset[] = [];
     @state() private _colorPresets: PaletteEntry[] = [];
+    @state() private _brightnessPresets: BrightnessPreset[] = [];
+    @state() private _scenePresets: ScenePreset[] = [];
 
     static styles = [
         sharedStyles,
@@ -94,6 +97,8 @@ export class OnCuePanel extends LitElement {
         this._loadSchedules();
         this._loadHvacPresets();
         this._loadColorPresets();
+        this._loadBrightnessPresets();
+        this._loadScenePresets();
     }
 
     render() {
@@ -119,11 +124,15 @@ export class OnCuePanel extends LitElement {
             .isNew=${this._isNew}
             .globalHvacPresets=${this._hvacPresets}
             .globalColorPresets=${this._colorPresets}
+            .globalBrightnessPresets=${this._brightnessPresets}
+            .globalScenePresets=${this._scenePresets}
             @schedule-saved=${this._onScheduleSaved}
             @schedule-deleted=${this._onScheduleDeleted}
             @editor-cancel=${this._onEditorCancel}
             @hvac-presets-changed=${this._onHvacPresetsChanged}
             @color-presets-changed=${this._onColorPresetsChanged}
+            @brightness-presets-changed=${this._onBrightnessPresetsChanged}
+            @scene-presets-changed=${this._onScenePresetsChanged}
           ></schedule-editor>
         </div>
       </div>
@@ -137,6 +146,7 @@ export class OnCuePanel extends LitElement {
     `;
     }
 
+    /** Fetch all schedule summaries from the backend. */
     private async _loadSchedules() {
         try {
             const result = await this.hass.connection.sendMessagePromise({
@@ -151,6 +161,7 @@ export class OnCuePanel extends LitElement {
         }
     }
 
+    /** Fetch global HVAC presets from the backend. */
     private async _loadHvacPresets() {
         try {
             const result = await this.hass.connection.sendMessagePromise({
@@ -163,6 +174,7 @@ export class OnCuePanel extends LitElement {
         }
     }
 
+    /** Fetch global color presets from the backend. */
     private async _loadColorPresets() {
         try {
             const result = await this.hass.connection.sendMessagePromise({
@@ -175,6 +187,7 @@ export class OnCuePanel extends LitElement {
         }
     }
 
+    /** Load full schedule data when a list item is selected. */
     private async _onScheduleSelected(e: CustomEvent) {
         const id = e.detail.id;
         try {
@@ -190,16 +203,20 @@ export class OnCuePanel extends LitElement {
         if (this.narrow) this._sidebarOpen = false;
     }
 
+    /** Create a new blank schedule and open the editor. */
     private _onAddSchedule() {
         this._selectedSchedule = null;
         this._isNew = true;
         if (this.narrow) this._sidebarOpen = false;
     }
 
+    /** Refresh lists and re-select the schedule after a save. */
     private async _onScheduleSaved(e: CustomEvent) {
         await this._loadSchedules();
         await this._loadHvacPresets();
         await this._loadColorPresets();
+        await this._loadBrightnessPresets();
+        await this._loadScenePresets();
         // Select the saved schedule
         const id = e.detail?.id;
         if (id) {
@@ -216,12 +233,14 @@ export class OnCuePanel extends LitElement {
         }
     }
 
+    /** Clear selection and refresh the schedule list after a deletion. */
     private async _onScheduleDeleted() {
         this._selectedSchedule = null;
         this._isNew = false;
         await this._loadSchedules();
     }
 
+    /** Discard a new unsaved schedule when the editor cancels. */
     private _onEditorCancel() {
         if (this._isNew) {
             this._isNew = false;
@@ -229,10 +248,12 @@ export class OnCuePanel extends LitElement {
         }
     }
 
+    /** Toggle the sidebar visibility on narrow screens. */
     private _toggleSidebar() {
         this._sidebarOpen = !this._sidebarOpen;
     }
 
+    /** Toggle a schedule's active state via save, then refresh. */
     private async _onToggleActive(e: CustomEvent) {
         const { id, active } = e.detail;
         try {
@@ -248,7 +269,7 @@ export class OnCuePanel extends LitElement {
                 schedule,
             });
             await this._loadSchedules();
-            if (this._selectedSchedule?.id === id) {
+            if (this._selectedSchedule && this._selectedSchedule.id === id) {
                 this._selectedSchedule = { ...this._selectedSchedule, active };
             }
         } catch (err) {
@@ -256,11 +277,49 @@ export class OnCuePanel extends LitElement {
         }
     }
 
+    /** Reload HVAC presets after a child component modifies them. */
     private async _onHvacPresetsChanged() {
         await this._loadHvacPresets();
     }
 
+    /** Reload color presets after a child component modifies them. */
     private async _onColorPresetsChanged() {
         await this._loadColorPresets();
+    }
+
+    /** Fetch global brightness presets from the backend. */
+    private async _loadBrightnessPresets() {
+        try {
+            const result = await this.hass.connection.sendMessagePromise({
+                type: "oncue_scheduler/get_brightness_presets",
+            });
+            this._brightnessPresets = result.brightness_presets ?? [];
+        } catch (err) {
+            console.error("Failed to load brightness presets:", err);
+            this._brightnessPresets = [];
+        }
+    }
+
+    /** Fetch global scene presets from the backend. */
+    private async _loadScenePresets() {
+        try {
+            const result = await this.hass.connection.sendMessagePromise({
+                type: "oncue_scheduler/get_scene_presets",
+            });
+            this._scenePresets = result.scene_presets ?? [];
+        } catch (err) {
+            console.error("Failed to load scene presets:", err);
+            this._scenePresets = [];
+        }
+    }
+
+    /** Reload brightness presets after a child component modifies them. */
+    private async _onBrightnessPresetsChanged() {
+        await this._loadBrightnessPresets();
+    }
+
+    /** Reload scene presets after a child component modifies them. */
+    private async _onScenePresetsChanged() {
+        await this._loadScenePresets();
     }
 }

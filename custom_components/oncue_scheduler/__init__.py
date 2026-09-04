@@ -41,7 +41,15 @@ class OnCueData:
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up OnCue from a config entry."""
+    """Set up OnCue from a config entry.
+
+    Initialises the store, coordinator, WebSocket API, switch platform,
+    and registers the frontend panel.
+
+    :param hass: Home Assistant instance.
+    :param entry: Config entry being set up.
+    :returns: True on successful setup.
+    """
     hass.data.setdefault(DOMAIN, {})
 
     store = ScheduleStore(hass)
@@ -83,7 +91,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Unload an OnCue config entry."""
+    """Unload an OnCue config entry.
+
+    Stops the coordinator, unloads the switch platform, and removes
+    the frontend panel.
+
+    :param hass: Home Assistant instance.
+    :param entry: Config entry being unloaded.
+    :returns: True if the entry was successfully unloaded.
+    """
     data: OnCueData = hass.data[DOMAIN][entry.entry_id]
     data.coordinator.async_stop()
 

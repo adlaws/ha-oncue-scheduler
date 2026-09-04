@@ -23,6 +23,15 @@ async def async_setup_entry(
     config_entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
+    """Set up schedule switch entities and track changes.
+
+    Creates a switch entity for each existing schedule, then listens
+    for schedule additions, deletions, and updates via dispatcher.
+
+    :param hass: Home Assistant instance.
+    :param config_entry: The config entry being set up.
+    :param async_add_entities: Callback to register new entities.
+    """
     data = hass.data[DOMAIN][config_entry.entry_id]
     store = data.store
 
@@ -30,6 +39,7 @@ async def async_setup_entry(
 
     @callback
     def _async_on_schedules_updated() -> None:
+        """Sync tracked switch entities with the current schedule set."""
         current_ids = set(store.schedules.keys())
         tracked_ids = set(tracked.keys())
 
@@ -79,6 +89,12 @@ class ScheduleSwitch(SwitchEntity):
         store: Any,
         schedule: dict[str, Any],
     ) -> None:
+        """Initialise a schedule switch.
+
+        :param entry_id: Config entry ID for device grouping.
+        :param store: ScheduleStore instance.
+        :param schedule: Initial schedule data dict.
+        """
         self._entry_id = entry_id
         self._store = store
         self._schedule_id: str = schedule["id"]
@@ -87,6 +103,10 @@ class ScheduleSwitch(SwitchEntity):
 
     @property
     def device_info(self) -> DeviceInfo:
+        """Device info grouping all schedule switches under one device.
+
+        :returns: DeviceInfo for the OnCue controller.
+        """
         return DeviceInfo(
             identifiers={(DOMAIN, self._entry_id)},
             name="OnCue",
@@ -96,15 +116,27 @@ class ScheduleSwitch(SwitchEntity):
 
     @property
     def _schedule(self) -> dict[str, Any] | None:
+        """Live reference to this switch's schedule data in the store.
+
+        :returns: Schedule dict, or None if the schedule was deleted.
+        """
         return self._store.schedules.get(self._schedule_id)
 
     @property
     def is_on(self) -> bool:
+        """True when the schedule is active.
+
+        :returns: Active state of the schedule.
+        """
         schedule = self._schedule
         return schedule.get("active", False) if schedule else False
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
+        """Expose schedule metadata as entity attributes.
+
+        :returns: Dict of schedule metadata (entity_ids, cadence, etc.).
+        """
         schedule = self._schedule
         if not schedule:
             return {}
@@ -117,7 +149,9 @@ class ScheduleSwitch(SwitchEntity):
         }
 
     async def async_turn_on(self, **kwargs: Any) -> None:
+        """Activate the schedule."""
         await self._store.async_set_active(self._schedule_id, True)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
+        """Deactivate the schedule."""
         await self._store.async_set_active(self._schedule_id, False)

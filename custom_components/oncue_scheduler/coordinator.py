@@ -20,23 +20,37 @@ from .const import (
     CADENCE_WEEKLY,
     EVENT_OVERRIDES_CHANGED,
     SIGNAL_SCHEDULES_UPDATED,
+    SLOT_TYPE_BRIGHTNESS,
     SLOT_TYPE_COLOR,
     SLOT_TYPE_ON_OFF,
+    SLOT_TYPE_SCENE,
 )
-from .slot_values import compute_animated_color, interpret_slot_value, normalize_palette_entry
+from .slot_values import compute_animated_brightness, compute_animated_color, hex_to_rgb, interpret_slot_value, normalize_palette_entry
 
 _LOGGER = logging.getLogger(__name__)
 
 
 def compute_slot_index(local_now: datetime, slot_minutes: int) -> int:
-    """Compute the slot index for a given local time."""
+    """Compute the slot index for a given local time.
+
+    :param local_now: Current local datetime.
+    :param slot_minutes: Duration of each slot in minutes.
+    :returns: Zero-based slot index for the current time of day.
+    """
     return (local_now.hour * 60 + local_now.minute) // slot_minutes
 
 
 def compute_day_key(
     schedule: dict[str, Any], local_date: date
 ) -> str | None:
-    """Compute the slot day key for a schedule, or None if outside range."""
+    """Compute the slot day key for a schedule, or None if outside range.
+
+    :param schedule: Schedule dict with cadence, start_date, end_date, repeat.
+    :param local_date: Current local date.
+    :returns: String day key ("0" for daily, "0"-"6" for weekly, offset for
+        custom), or None if the date falls outside a non-repeating
+        custom range.
+    """
     cadence = schedule["cadence"]
 
     if cadence == CADENCE_DAILY:
@@ -67,10 +81,36 @@ def compute_day_key(
     return None
 
 
+def _resolve_slot(
+    schedule: dict[str, Any], local_now: datetime
+) -> tuple[int, list[int] | None]:
+    """Return (slot_index, day_slots) for a schedule at the given time.
+
+    :param schedule: Schedule dict with slots, slot_minutes, and cadence.
+    :param local_now: Current local datetime.
+    :returns: Tuple of (slot_index, day_slots). day_slots is None if the
+        schedule has no slots for the current day.
+    """
+    slot_minutes = schedule.get("slot_minutes", 15)
+    slot_index = compute_slot_index(local_now, slot_minutes)
+    day_key = compute_day_key(schedule, local_now.date())
+    if day_key is None:
+        return slot_index, None
+    day_slots = schedule.get("slots", {}).get(day_key)
+    if not day_slots or slot_index >= len(day_slots):
+        return slot_index, None
+    return slot_index, day_slots
+
+
 class ScheduleCoordinator:
     """Evaluates active schedules and controls target entities."""
 
     def __init__(self, hass: HomeAssistant, store: Any) -> None:
+        """Initialise the coordinator.
+
+        :param hass: Home Assistant instance.
+        :param store: ScheduleStore providing schedule data.
+        """
         self._hass = hass
         self._store = store
         self._unsub_time: CALLBACK_TYPE | None = None
@@ -88,8 +128,11 @@ class ScheduleCoordinator:
         self._unsub_anim: CALLBACK_TYPE | None = None
         # Last-sent animated colour per entity to avoid redundant calls
         self._last_anim_color: dict[str, list[int]] = {}
+        # Last-sent animated brightness per entity to avoid redundant calls
+        self._last_anim_brightness: dict[str, int] = {}
 
     async def async_start(self) -> None:
+        """Start tracking time, signals, and state changes."""
         self._unsub_time = async_track_utc_time_change(
             self._hass,
             self._async_on_tick,
@@ -108,6 +151,7 @@ class ScheduleCoordinator:
 
     @callback
     def async_stop(self) -> None:
+        """Stop all tracking and cancel pending timers."""
         if self._unsub_time:
             self._unsub_time()
             self._unsub_time = None
@@ -124,19 +168,27 @@ class ScheduleCoordinator:
             cancel()
         self._revert_timers.clear()
         self._last_anim_color.clear()
+        self._last_anim_brightness.clear()
 
     async def _async_on_tick(self, now: datetime) -> None:
+        """Handle the 15-minute boundary timer tick.
+
+        :param now: Current UTC datetime from the time tracker.
+        """
         await self._async_evaluate()
 
     async def _async_on_schedules_updated(self) -> None:
+        """Respond to schedule changes by refreshing listeners and re-evaluating."""
         self._refresh_state_listeners()
         self._refresh_animation_timer()
         await self._async_evaluate()
 
     async def _async_evaluate(self) -> None:
+        """Evaluate all active schedules and apply the current slot's desired state."""
         local_now = dt_util.now()
         local_date = local_now.date()
 
+        # Snapshot: deactivating expired schedules modifies the dict during iteration
         for schedule in list(self._store.schedules.values()):
             if not schedule.get("active"):
                 continue
@@ -158,15 +210,8 @@ class ScheduleCoordinator:
                     await self._store.async_set_active(schedule["id"], False)
                     continue
 
-            slot_minutes = schedule.get("slot_minutes", 15)
-            slot_index = compute_slot_index(local_now, slot_minutes)
-            day_key = compute_day_key(schedule, local_date)
-            if day_key is None:
-                continue
-
-            slots = schedule.get("slots", {})
-            day_slots = slots.get(day_key)
-            if not day_slots or slot_index >= len(day_slots):
+            slot_index, day_slots = _resolve_slot(schedule, local_now)
+            if day_slots is None:
                 continue
 
             desired_state = day_slots[slot_index]
@@ -181,6 +226,13 @@ class ScheduleCoordinator:
                     await self._async_apply_state(entity_id, desired_state, slot_type, schedule)
 
     async def _async_apply_state(self, entity_id: str, desired: int, slot_type: str, schedule: dict[str, Any] | None = None) -> None:
+        """Apply a single slot value to an entity via the appropriate HA service.
+
+        :param entity_id: Target entity to control.
+        :param desired: Slot value (0 = off/none, 1..N = preset index).
+        :param slot_type: One of SLOT_TYPE_ON_OFF, SLOT_TYPE_COLOR, SLOT_TYPE_HVAC.
+        :param schedule: Parent schedule dict for preset lookup.
+        """
         state = self._hass.states.get(entity_id)
         if state is None:
             if entity_id not in self._unavailable:
@@ -202,7 +254,9 @@ class ScheduleCoordinator:
 
         palette = self._store.color_presets or None
         hvac_presets = self._store.hvac_presets or None
-        result = interpret_slot_value(desired, slot_type, palette, hvac_presets)
+        brightness_presets = self._store.brightness_presets or None
+        scene_presets = self._store.scene_presets or None
+        result = interpret_slot_value(desired, slot_type, palette, hvac_presets, brightness_presets, scene_presets)
         action = result["action"]
 
         if action == "none":
@@ -267,6 +321,44 @@ class ScheduleCoordinator:
                 self._applying.discard(entity_id)
             return
 
+        if action == "set_brightness":
+            brightness = result["brightness"]
+            self._applying.add(entity_id)
+            try:
+                await self._hass.services.async_call(
+                    "light",
+                    "turn_on",
+                    {"entity_id": entity_id, "brightness": int(brightness)},
+                    blocking=True,
+                )
+            except Exception:
+                _LOGGER.warning(
+                    "Failed to set brightness on '%s'", entity_id,
+                    exc_info=True,
+                )
+            finally:
+                self._applying.discard(entity_id)
+            return
+
+        if action == "activate_scene":
+            scene_id = result["scene_id"]
+            self._applying.add(entity_id)
+            try:
+                await self._hass.services.async_call(
+                    "scene",
+                    "turn_on",
+                    {"entity_id": scene_id},
+                    blocking=True,
+                )
+            except Exception:
+                _LOGGER.warning(
+                    "Failed to activate scene '%s' for '%s'", scene_id, entity_id,
+                    exc_info=True,
+                )
+            finally:
+                self._applying.discard(entity_id)
+            return
+
         current_on = state.state == "on"
         want_on = action == "turn_on"
 
@@ -291,14 +383,23 @@ class ScheduleCoordinator:
             self._applying.discard(entity_id)
 
     def set_override(self, schedule_id: str, entity_id: str, state: str) -> None:
-        """Set a runtime override for an entity in a schedule."""
+        """Set a runtime override for an entity in a schedule.
+
+        :param schedule_id: Schedule to override within.
+        :param entity_id: Entity to override.
+        :param state: Desired state, "on" or "off".
+        """
         self._overrides.setdefault(schedule_id, {})[entity_id] = state
         self._hass.bus.async_fire(
             EVENT_OVERRIDES_CHANGED, {"schedule_id": schedule_id}
         )
 
     def clear_override(self, schedule_id: str, entity_id: str) -> None:
-        """Clear a runtime override for an entity in a schedule."""
+        """Clear a runtime override for an entity in a schedule.
+
+        :param schedule_id: Schedule containing the override.
+        :param entity_id: Entity whose override to remove.
+        """
         if schedule_id in self._overrides:
             self._overrides[schedule_id].pop(entity_id, None)
             if not self._overrides[schedule_id]:
@@ -308,11 +409,19 @@ class ScheduleCoordinator:
             )
 
     def get_overrides(self, schedule_id: str) -> dict[str, str]:
-        """Return current overrides for a schedule: {entity_id: "on"|"off"}."""
+        """Return current overrides for a schedule.
+
+        :param schedule_id: Schedule to query.
+        :returns: Dict mapping entity_id to "on" or "off".
+        """
         return dict(self._overrides.get(schedule_id, {}))
 
     def get_unavailable_entities(self, schedule_id: str) -> list[str]:
-        """Return entities in a schedule that are currently unavailable."""
+        """Return entities in a schedule that are currently unavailable.
+
+        :param schedule_id: Schedule to query.
+        :returns: Sorted list of entity IDs with unavailable or unknown state.
+        """
         schedule = self._store.schedules.get(schedule_id)
         if not schedule:
             return []
@@ -322,33 +431,33 @@ class ScheduleCoordinator:
         )
 
     def get_scheduled_states(self, schedule_id: str) -> dict[str, str]:
-        """Return what each entity's scheduled state is right now."""
+        """Return what each entity's scheduled state is right now.
+
+        :param schedule_id: Schedule to query.
+        :returns: Dict mapping entity_id to "on" or "off", empty if the
+            schedule is inactive or has no slots for the current time.
+        """
         schedule = self._store.schedules.get(schedule_id)
         if not schedule or not schedule.get("active"):
             return {}
 
         local_now = dt_util.now()
-        local_date = local_now.date()
-        slot_minutes = schedule.get("slot_minutes", 15)
-        slot_index = compute_slot_index(local_now, slot_minutes)
-        day_key = compute_day_key(schedule, local_date)
-        if day_key is None:
-            return {}
-
-        day_slots = schedule.get("slots", {}).get(day_key)
-        if not day_slots or slot_index >= len(day_slots):
+        slot_index, day_slots = _resolve_slot(schedule, local_now)
+        if day_slots is None:
             return {}
 
         slot_type = schedule.get("slot_type", SLOT_TYPE_ON_OFF)
         desired = day_slots[slot_index]
         palette = self._store.color_presets or None
         hvac_presets = self._store.hvac_presets or None
-        result = interpret_slot_value(desired, slot_type, palette, hvac_presets)
+        brightness_presets = self._store.brightness_presets or None
+        scene_presets = self._store.scene_presets or None
+        result = interpret_slot_value(desired, slot_type, palette, hvac_presets, brightness_presets, scene_presets)
         action = result["action"]
         if action == "none":
             scheduled_state = "off"
         else:
-            scheduled_state = "on" if action in ("turn_on", "set_color", "set_hvac") else "off"
+            scheduled_state = "on" if action in ("turn_on", "set_color", "set_hvac", "set_brightness", "activate_scene") else "off"
 
         return {eid: scheduled_state for eid in schedule.get("entity_ids", [])}
 
@@ -371,7 +480,14 @@ class ScheduleCoordinator:
 
     @callback
     def _on_state_changed(self, event: Event) -> None:
-        """Handle an external state change on a managed entity."""
+        """Handle an external state change on a managed entity.
+
+        Ignores changes caused by the coordinator itself. Schedules a
+        revert if the entity was changed externally and the schedule
+        has revert_delay set.
+
+        :param event: State change event with entity_id, old_state, new_state.
+        """
         entity_id = event.data.get("entity_id", "")
 
         # Ignore state changes caused by the coordinator itself
@@ -408,7 +524,7 @@ class ScheduleCoordinator:
                 continue
 
             # Determine the desired state (override takes priority)
-            desired = self._get_desired_state(schedule, entity_id)
+            desired, raw_slot_value = self._get_desired_state(schedule, entity_id)
             if desired is None:
                 continue
 
@@ -422,12 +538,15 @@ class ScheduleCoordinator:
                 "will revert in %s seconds",
                 entity_id, new_state.state, desired, revert_delay,
             )
-            self._schedule_revert(entity_id, desired, revert_delay)
+            slot_type = schedule.get("slot_type", SLOT_TYPE_ON_OFF)
+            self._schedule_revert(entity_id, raw_slot_value, revert_delay, slot_type, schedule)
 
     async def _async_apply_on_available(self, entity_id: str) -> None:
-        """Apply scheduled state to an entity that just became available."""
+        """Apply scheduled state to an entity that just became available.
+
+        :param entity_id: Entity that transitioned from unavailable to available.
+        """
         local_now = dt_util.now()
-        local_date = local_now.date()
 
         for schedule in self._store.schedules.values():
             if not schedule.get("active"):
@@ -435,14 +554,8 @@ class ScheduleCoordinator:
             if entity_id not in schedule.get("entity_ids", []):
                 continue
 
-            slot_minutes = schedule.get("slot_minutes", 15)
-            slot_index = compute_slot_index(local_now, slot_minutes)
-            day_key = compute_day_key(schedule, local_date)
-            if day_key is None:
-                continue
-
-            day_slots = schedule.get("slots", {}).get(day_key)
-            if not day_slots or slot_index >= len(day_slots):
+            slot_index, day_slots = _resolve_slot(schedule, local_now)
+            if day_slots is None:
                 continue
 
             desired_state = day_slots[slot_index]
@@ -458,42 +571,59 @@ class ScheduleCoordinator:
 
     def _get_desired_state(
         self, schedule: dict[str, Any], entity_id: str
-    ) -> str | None:
-        """Return the desired state for an entity: override > scheduled."""
+    ) -> tuple[str | None, int]:
+        """Return (simple_state, raw_slot_value) for an entity.
+
+        simple_state is "on"/"off"/None for HA state comparison.
+        raw_slot_value is the actual slot integer for applying the correct action.
+
+        :param schedule: Schedule dict to evaluate.
+        :param entity_id: Entity to look up.
+        :returns: Tuple of (simple_state, raw_slot_value).
+        """
         override = self._overrides.get(schedule["id"], {}).get(entity_id)
         if override is not None:
-            return override
+            return override, (1 if override == "on" else 0)
 
         local_now = dt_util.now()
-        slot_minutes = schedule.get("slot_minutes", 15)
-        slot_index = compute_slot_index(local_now, slot_minutes)
-        day_key = compute_day_key(schedule, local_now.date())
-        if day_key is None:
-            return None
+        slot_index, day_slots = _resolve_slot(schedule, local_now)
+        if day_slots is None:
+            return None, 0
 
-        day_slots = schedule.get("slots", {}).get(day_key)
-        if not day_slots or slot_index >= len(day_slots):
-            return None
-
+        raw_value = day_slots[slot_index]
         slot_type = schedule.get("slot_type", SLOT_TYPE_ON_OFF)
         palette = self._store.color_presets or None
         hvac_presets = self._store.hvac_presets or None
-        result = interpret_slot_value(day_slots[slot_index], slot_type, palette, hvac_presets)
+        brightness_presets = self._store.brightness_presets or None
+        scene_presets = self._store.scene_presets or None
+        result = interpret_slot_value(raw_value, slot_type, palette, hvac_presets, brightness_presets, scene_presets)
         action = result["action"]
         if action == "none":
-            return "off"
-        return "on" if action in ("turn_on", "set_color", "set_hvac") else "off"
+            return "off", 0
+        simple = "on" if action in ("turn_on", "set_color", "set_hvac", "set_brightness", "activate_scene") else "off"
+        return simple, raw_value
 
     def _schedule_revert(
-        self, entity_id: str, desired: str, delay: int
+        self, entity_id: str, slot_value: int, delay: int,
+        slot_type: str = SLOT_TYPE_ON_OFF, schedule: dict[str, Any] | None = None,
     ) -> None:
-        """Schedule a delayed revert for an entity."""
+        """Schedule a delayed revert for an entity.
+
+        :param entity_id: Entity to revert.
+        :param slot_value: Raw slot value to apply on revert.
+        :param delay: Delay in seconds before reverting.
+        :param slot_type: Slot type for interpreting the value.
+        :param schedule: Parent schedule dict for preset lookup.
+        """
         self._cancel_revert(entity_id)
 
         async def _do_revert(_now: datetime) -> None:
+            """Apply the scheduled slot value after the revert delay.
+
+            :param _now: Current time (unused, required by async_call_later).
+            """
             self._revert_timers.pop(entity_id, None)
-            desired_int = 1 if desired == "on" else 0
-            await self._async_apply_state(entity_id, desired_int, SLOT_TYPE_ON_OFF)
+            await self._async_apply_state(entity_id, slot_value, slot_type, schedule)
 
         cancel = self._hass.helpers.event.async_call_later(
             delay, _do_revert
@@ -501,27 +631,46 @@ class ScheduleCoordinator:
         self._revert_timers[entity_id] = cancel
 
     def _cancel_revert(self, entity_id: str) -> None:
-        """Cancel a pending revert timer for an entity."""
+        """Cancel a pending revert timer for an entity.
+
+        :param entity_id: Entity whose revert timer to cancel.
+        """
         cancel = self._revert_timers.pop(entity_id, None)
         if cancel:
             cancel()
 
-    # ── Animated colour support ──
+    # ── Animated colour / brightness support ──
 
     def _has_animated_palette_entries(self) -> bool:
-        """Check if any active colour schedule uses animated palette modes."""
+        """Check if any active schedule uses animated palette modes.
+
+        :returns: True if at least one active color schedule has a non-solid
+            palette entry, or if an active brightness schedule uses crossfade.
+        """
+        # Check colour schedules
         has_color_schedule = any(
             s.get("active") and s.get("slot_type") == SLOT_TYPE_COLOR
             for s in self._store.schedules.values()
         )
-        if not has_color_schedule:
-            return False
-        palette = self._store.color_presets
-        if not palette:
-            return False
-        for entry in palette:
-            if isinstance(entry, dict) and entry.get("mode", "solid") != "solid":
-                return True
+        if has_color_schedule:
+            palette = self._store.color_presets
+            if palette:
+                for entry in palette:
+                    if isinstance(entry, dict) and entry.get("mode", "solid") != "solid":
+                        return True
+
+        # Check brightness schedules
+        has_brightness_schedule = any(
+            s.get("active") and s.get("slot_type") == SLOT_TYPE_BRIGHTNESS
+            for s in self._store.schedules.values()
+        )
+        if has_brightness_schedule:
+            b_presets = self._store.brightness_presets
+            if b_presets:
+                for entry in b_presets:
+                    if isinstance(entry, dict) and entry.get("transition") == "crossfade":
+                        return True
+
         return False
 
     @callback
@@ -538,11 +687,26 @@ class ScheduleCoordinator:
             self._unsub_anim()
             self._unsub_anim = None
             self._last_anim_color.clear()
+            self._last_anim_brightness.clear()
 
     async def _async_on_anim_tick(self, now: datetime) -> None:
-        """Evaluate animated colour slots every ~5 seconds."""
+        """Evaluate animated colour and brightness slots every ~5 seconds.
+
+        Computes the current frame for crossfade/cycle/tv modes and
+        updates entity colours/brightness only when the value has changed.
+
+        :param now: Current UTC datetime from the time tracker.
+        """
         local_now = dt_util.now()
-        local_date = local_now.date()
+
+        await self._async_anim_tick_color(local_now)
+        await self._async_anim_tick_brightness(local_now)
+
+    async def _async_anim_tick_color(self, local_now: datetime) -> None:
+        """Process animated colour schedules on each animation tick.
+
+        :param local_now: Current local datetime.
+        """
         palette = self._store.color_presets
         if not palette:
             return
@@ -553,16 +717,11 @@ class ScheduleCoordinator:
             if schedule.get("slot_type") != SLOT_TYPE_COLOR:
                 continue
 
+            slot_index, day_slots = _resolve_slot(schedule, local_now)
+            if day_slots is None:
+                continue
+
             slot_minutes = schedule.get("slot_minutes", 15)
-            slot_index = compute_slot_index(local_now, slot_minutes)
-            day_key = compute_day_key(schedule, local_date)
-            if day_key is None:
-                continue
-
-            day_slots = schedule.get("slots", {}).get(day_key)
-            if not day_slots or slot_index >= len(day_slots):
-                continue
-
             value = day_slots[slot_index]
             if value == 0 or value > len(palette):
                 continue
@@ -590,7 +749,6 @@ class ScheduleCoordinator:
                     next_val = day_slots[next_idx]
                     if next_val > 0 and next_val <= len(palette):
                         next_entry = normalize_palette_entry(palette[next_val - 1])
-                        from .slot_values import hex_to_rgb
                         next_rgb = list(hex_to_rgb(next_entry["color"]))
 
             rgb = compute_animated_color(
@@ -626,6 +784,82 @@ class ScheduleCoordinator:
                 except Exception:
                     _LOGGER.warning(
                         "Failed to set animated color on '%s'", entity_id,
+                        exc_info=True,
+                    )
+                finally:
+                    self._applying.discard(entity_id)
+
+    async def _async_anim_tick_brightness(self, local_now: datetime) -> None:
+        """Process animated brightness schedules on each animation tick.
+
+        :param local_now: Current local datetime.
+        """
+        b_presets = self._store.brightness_presets
+        if not b_presets:
+            return
+
+        for schedule in list(self._store.schedules.values()):
+            if not schedule.get("active"):
+                continue
+            if schedule.get("slot_type") != SLOT_TYPE_BRIGHTNESS:
+                continue
+
+            slot_index, day_slots = _resolve_slot(schedule, local_now)
+            if day_slots is None:
+                continue
+
+            slot_minutes = schedule.get("slot_minutes", 15)
+            value = day_slots[slot_index]
+            if value == 0 or value > len(b_presets):
+                continue
+
+            preset = b_presets[value - 1]
+            if not isinstance(preset, dict) or preset.get("transition") != "crossfade":
+                continue
+
+            # Compute elapsed seconds within the current slot
+            slot_start_minutes = slot_index * slot_minutes
+            elapsed = (local_now.hour * 60 + local_now.minute - slot_start_minutes) * 60 + local_now.second
+            slot_seconds = slot_minutes * 60
+
+            current_brightness = preset["brightness"]
+
+            # Resolve next slot's brightness for crossfade target
+            next_brightness = None
+            next_idx = slot_index + 1
+            if next_idx < len(day_slots):
+                next_val = day_slots[next_idx]
+                if next_val > 0 and next_val <= len(b_presets):
+                    next_brightness = b_presets[next_val - 1]["brightness"]
+
+            brightness = compute_animated_brightness(
+                elapsed_seconds=elapsed,
+                slot_seconds=slot_seconds,
+                current_brightness=current_brightness,
+                next_brightness=next_brightness,
+            )
+
+            for entity_id in schedule.get("entity_ids", []):
+                override = self._overrides.get(schedule["id"], {}).get(entity_id)
+                if override is not None:
+                    continue
+                if entity_id in self._unavailable:
+                    continue
+                # Skip if brightness hasn't changed
+                if self._last_anim_brightness.get(entity_id) == brightness:
+                    continue
+                self._last_anim_brightness[entity_id] = brightness
+                self._applying.add(entity_id)
+                try:
+                    await self._hass.services.async_call(
+                        "light",
+                        "turn_on",
+                        {"entity_id": entity_id, "brightness": brightness},
+                        blocking=True,
+                    )
+                except Exception:
+                    _LOGGER.warning(
+                        "Failed to set animated brightness on '%s'", entity_id,
                         exc_info=True,
                     )
                 finally:

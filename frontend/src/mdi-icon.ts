@@ -5,6 +5,11 @@ import { customElement, property, state } from "lit/decorators.js";
 const _pathCache = new Map<string, string>();
 const _pendingFetches = new Map<string, Promise<string>>();
 
+/**
+ * Fetch the SVG path data for an MDI icon, with caching.
+ * @param name - Icon name, e.g. "mdi:home".
+ * @returns SVG path data string, or empty string on failure.
+ */
 async function fetchIconPath(name: string): Promise<string> {
     const cached = _pathCache.get(name);
     if (cached !== undefined) return cached;
@@ -68,6 +73,7 @@ export class MdiIcon extends LitElement {
         }
     }
 
+    /** Fetch SVG path data for the current icon from CDN. */
     private async _loadPath() {
         this._path = "";
         if (!this.icon) return;

@@ -180,7 +180,7 @@ async def test_validation_rejects_empty_name(store):
         "entity_ids": ["switch.test"],
         "cadence": "daily",
     }
-    with pytest.raises(ValueError, match="name is required"):
+    with pytest.raises(ValueError, match="name must be a non-empty string"):
         await store.async_save_schedule(data)
 
 

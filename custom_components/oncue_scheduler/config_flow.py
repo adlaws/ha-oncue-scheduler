@@ -17,6 +17,11 @@ class OnCueConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        """Handle the user step — show form or create the singleton entry.
+
+        :param user_input: Form data if submitted, or None for initial display.
+        :returns: ConfigFlowResult directing to the form or creating the entry.
+        """
         await self.async_set_unique_id(DOMAIN)
         self._abort_if_unique_id_configured()
 

@@ -1,7 +1,7 @@
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles } from "./styles";
-import type { HvacPreset, PaletteEntry } from "./types";
+import type { HvacPreset, PaletteEntry, BrightnessPreset, ScenePreset } from "./types";
 import { normalizePaletteEntry, paletteEntryDisplayColor, paletteEntryBackground } from "./types";
 import "./mdi-icon";
 
@@ -10,6 +10,13 @@ const MOBILE_SLOTS_PER_ROW = 16;
 const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 const DAY_KEYS_WEEKLY = ["0", "1", "2", "3", "4", "5", "6"];
 
+function _chipTextColor(hex: string): string {
+    const v = parseInt(hex.slice(1), 16);
+    const r = (v >> 16) & 0xff, g = (v >> 8) & 0xff, b = v & 0xff;
+    return (r * 0.299 + g * 0.587 + b * 0.114) > 160 ? "#000" : "#fff";
+}
+
+/** Interactive time-slot grid supporting drag-paint, palette modes, and mobile layout. */
 @customElement("schedule-grid")
 export class ScheduleGrid extends LitElement {
     @property({ type: String }) cadence: "daily" | "weekly" | "custom" = "daily";
@@ -18,6 +25,8 @@ export class ScheduleGrid extends LitElement {
     @property({ type: String }) slotType: string = "on_off";
     @property({ type: Array }) palette: PaletteEntry[] = [];
     @property({ type: Array }) hvacPresets: HvacPreset[] = [];
+    @property({ type: Array }) brightnessPresets: BrightnessPreset[] = [];
+    @property({ type: Array }) scenePresets: ScenePreset[] = [];
 
     @state() private _dragActive = false;
     @state() private _dragValue = 0;
@@ -41,6 +50,7 @@ export class ScheduleGrid extends LitElement {
     private _timerHandle: ReturnType<typeof setInterval> | null = null;
     private _mediaQuery: MediaQueryList | null = null;
 
+    /** Current time of day in minutes since midnight. */
     private static _currentMinutes(): number {
         const now = new Date();
         return now.getHours() * 60 + now.getMinutes();
@@ -65,6 +75,7 @@ export class ScheduleGrid extends LitElement {
         this._mediaQuery?.removeEventListener("change", this._onMediaChange);
     }
 
+    /** Respond to viewport width changes. */
     private _onMediaChange = (e: MediaQueryListEvent) => {
         this._isMobile = e.matches;
     };
@@ -77,6 +88,7 @@ export class ScheduleGrid extends LitElement {
         }
     }
 
+    /** Position the red "now" line on the desktop grid. */
     private _updateTimeIndicatorPosition() {
         if (this._isMobile) {
             this._updateMobileTimeIndicator();
@@ -95,6 +107,7 @@ export class ScheduleGrid extends LitElement {
         this._timeIndicatorLeft = cellRect.left - wrapperRect.left + cellRect.width * fraction;
     }
 
+    /** Position the red "now" marker on the mobile single-day grid. */
     private _updateMobileTimeIndicator() {
         const grid = this.shadowRoot?.querySelector(".mobile-grid") as HTMLElement | null;
         const wrapper = this.shadowRoot?.querySelector(".grid-wrapper") as HTMLElement | null;
@@ -279,6 +292,7 @@ export class ScheduleGrid extends LitElement {
         align-items: center;
         justify-content: center;
         color: #fff;
+        position: relative;
       }
       .palette-swatch:hover {
         transform: scale(1.15);
@@ -294,6 +308,58 @@ export class ScheduleGrid extends LitElement {
       }
       .palette-swatch.eraser.active {
         border-color: var(--primary-text-color, #212121);
+      }
+      .palette-swatch .swatch-remove {
+        display: none;
+        position: absolute;
+        top: -6px;
+        right: -6px;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        border: none;
+        background: var(--error-color, #db4437);
+        color: #fff;
+        font-size: 9px;
+        cursor: pointer;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        line-height: 1;
+      }
+      .palette-swatch:hover .swatch-remove {
+        display: flex;
+      }
+      .palette-swatch .swatch-edit {
+        display: none;
+        position: absolute;
+        top: -6px;
+        left: -6px;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        border: none;
+        background: var(--primary-color, #03a9f4);
+        color: #fff;
+        font-size: 8px;
+        cursor: pointer;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        line-height: 1;
+      }
+      .palette-swatch:hover .swatch-edit {
+        display: flex;
+      }
+      .palette-swatch-add {
+        background: var(--ss-cell-off, #e0e0e0);
+        border-color: var(--ss-border, #ccc);
+        color: var(--secondary-text-color, #727272);
+        font-size: 16px;
+        font-weight: bold;
+      }
+      .palette-swatch-add:hover {
+        background: var(--ss-border, #ccc);
       }
       .grid-wrapper {
         position: relative;
@@ -372,12 +438,14 @@ export class ScheduleGrid extends LitElement {
     `,
     ];
 
+    /** All day keys for the current cadence, unpaginated. */
     private get _allDayKeys(): string[] {
         if (this.cadence === "daily") return ["0"];
         if (this.cadence === "weekly") return DAY_KEYS_WEEKLY;
         return this.customDates;
     }
 
+    /** Day keys for the current page (paginated for custom cadence). */
     private get _dayKeys(): string[] {
         if (this.cadence === "daily") return ["0"];
         if (this.cadence === "weekly") return DAY_KEYS_WEEKLY;
@@ -388,6 +456,7 @@ export class ScheduleGrid extends LitElement {
         return allDates.slice(start, start + this._daysPerPage);
     }
 
+    /** The day key currently shown in mobile single-day view. */
     private get _effectiveMobileDay(): string {
         const keys = this._allDayKeys;
         if (this._mobileSelectedDayKey && keys.includes(this._mobileSelectedDayKey)) {
@@ -396,11 +465,16 @@ export class ScheduleGrid extends LitElement {
         return keys[0] || "0";
     }
 
+    /** Total pages for custom cadence pagination. */
     private get _totalPages(): number {
         if (this.cadence !== "custom") return 1;
         return Math.max(1, Math.ceil(this.customDates.length / this._daysPerPage));
     }
 
+    /**
+     * Render a day label — day-of-week + date for custom cadence.
+     * @param key - Day key string.
+     */
     private _renderLabel(key: string) {
         if (this.cadence !== "custom") return this._dayLabel(key);
         const d = new Date(key + "T00:00:00");
@@ -408,6 +482,11 @@ export class ScheduleGrid extends LitElement {
         return html`<span class="day-name">${dow}</span><span class="day-date">${key}</span>`;
     }
 
+    /**
+     * Human-readable label for a day key.
+     * @param key - Day key string.
+     * @returns Day name for weekly, date string for custom, "Every day" for daily.
+     */
     private _dayLabel(key: string): string {
         if (this.cadence === "daily") return "Every day";
         if (this.cadence === "weekly") return DAY_NAMES[parseInt(key)] ?? key;
@@ -416,6 +495,10 @@ export class ScheduleGrid extends LitElement {
         return `${dow} ${key}`;
     }
 
+    /**
+     * Day label appended with "(Today)" for mobile view.
+     * @param key - Day key string.
+     */
     private _mobileDayLabel(key: string): string {
         const label = this._dayLabel(key);
         return this._rowTemporalState(key) === "today" ? `${label} (Today)` : label;
@@ -426,10 +509,11 @@ export class ScheduleGrid extends LitElement {
         return this._renderDesktopLayout();
     }
 
+    /** Render the desktop multi-row grid with drag support. */
     private _renderDesktopLayout() {
         const dayKeys = this._dayKeys;
         const hours = Array.from({ length: 24 }, (_, i) => i);
-        const isPalette = this.slotType === "color" || this.slotType === "hvac";
+        const isPalette = this.slotType === "color" || this.slotType === "hvac" || this.slotType === "brightness" || this.slotType === "scene";
 
         return html`
       ${isPalette ? this._renderPaletteBar() : nothing}
@@ -486,8 +570,9 @@ export class ScheduleGrid extends LitElement {
     `;
     }
 
+    /** Render the single-day mobile layout with day selector. */
     private _renderMobileLayout() {
-        const isPalette = this.slotType === "color" || this.slotType === "hvac";
+        const isPalette = this.slotType === "color" || this.slotType === "hvac" || this.slotType === "brightness" || this.slotType === "scene";
         const dayKeys = this._allDayKeys;
         const selectedDay = this._effectiveMobileDay;
         const daySlots = this.slots[selectedDay] ?? new Array(SLOTS_PER_DAY).fill(0);
@@ -573,19 +658,27 @@ export class ScheduleGrid extends LitElement {
     `;
     }
 
+    /** Update the selected day from the mobile dropdown. */
     private _onMobileDayChange(e: Event) {
         this._mobileSelectedDayKey = (e.target as HTMLSelectElement).value;
     }
 
+    /** Toggle mobile paint mode on/off. */
     private _togglePaintMode() {
         this._mobilePaintMode = !this._mobilePaintMode;
     }
 
+    /**
+     * Toggle a single cell's value (used for mobile tap-to-toggle).
+     * @param row - Row index within the mobile grid.
+     * @param col - Column index within the mobile grid.
+     * @param dayKey - Day key for the slot array to modify.
+     */
     private _toggleSingleCell(row: number, col: number, dayKey: string) {
         const slotIdx = row * MOBILE_SLOTS_PER_ROW + col;
         if (slotIdx >= SLOTS_PER_DAY) return;
         const daySlots = [...(this.slots[dayKey] ?? new Array(SLOTS_PER_DAY).fill(0))];
-        if (this.slotType === "color" || this.slotType === "hvac") {
+        if (this.slotType === "color" || this.slotType === "hvac" || this.slotType === "brightness" || this.slotType === "scene") {
             daySlots[slotIdx] = daySlots[slotIdx] === this._activePaletteIndex ? 0 : this._activePaletteIndex;
         } else {
             daySlots[slotIdx] = daySlots[slotIdx] ? 0 : 1;
@@ -600,6 +693,11 @@ export class ScheduleGrid extends LitElement {
         );
     }
 
+    /**
+     * Week index for alternating row shading in custom cadence.
+     * @param dayKey - ISO date string.
+     * @returns Zero-based week number relative to the schedule's first date.
+     */
     private _weekIndex(dayKey: string): number {
         if (this.cadence !== "custom") return 0;
         const d = new Date(dayKey + "T00:00:00");
@@ -613,6 +711,11 @@ export class ScheduleGrid extends LitElement {
         return Math.floor(daysSinceSunday / 7);
     }
 
+    /**
+     * Classify a day key as today, past, or other.
+     * @param dayKey - Day key string.
+     * @returns "today", "past", or "other".
+     */
     private _rowTemporalState(dayKey: string): "today" | "past" | "other" {
         const now = new Date();
         if (this.cadence === "weekly") {
@@ -629,9 +732,10 @@ export class ScheduleGrid extends LitElement {
         return "other";
     }
 
+    /** Render a day row of slot cells with drag and touch handlers. */
     private _renderRow(dayKey: string, rowIdx: number) {
         const daySlots = this.slots[dayKey] ?? new Array(SLOTS_PER_DAY).fill(0);
-        const isPalette = this.slotType === "color" || this.slotType === "hvac";
+        const isPalette = this.slotType === "color" || this.slotType === "hvac" || this.slotType === "brightness" || this.slotType === "scene";
         const weekEven = this.cadence === "custom" && this._weekIndex(dayKey) % 2 === 1;
         const rowState = this._rowTemporalState(dayKey);
         const isToday = rowState === "today";
@@ -660,6 +764,12 @@ export class ScheduleGrid extends LitElement {
     `;
     }
 
+    /**
+     * Build a tooltip string for a grid cell.
+     * @param colIdx - Slot index within the day.
+     * @param val - Slot value (0 = off, 1..N = preset index).
+     * @returns Multi-line tooltip with time range and preset details.
+     */
     private _cellTooltip(colIdx: number, val: number = 0): string {
         const startH = Math.floor((colIdx * 15) / 60);
         const startM = (colIdx * 15) % 60;
@@ -681,31 +791,80 @@ export class ScheduleGrid extends LitElement {
                 return `${time}\n${norm.alias}`;
             }
         }
+        if (this.slotType === "brightness" && val > 0 && this.brightnessPresets && val <= this.brightnessPresets.length) {
+            const preset = this.brightnessPresets[val - 1];
+            const pct = Math.round(preset.brightness / 255 * 100);
+            const label = preset.alias || `${pct}%`;
+            const suffix = preset.transition === "crossfade" ? " ⇢" : "";
+            return `${time}\n${label}${suffix}`;
+        }
+        if (this.slotType === "scene" && val > 0 && this.scenePresets && val <= this.scenePresets.length) {
+            const preset = this.scenePresets[val - 1];
+            return `${time}\n${preset.alias || preset.name}`;
+        }
         return time;
     }
 
+    /**
+     * Inline CSS background for a palette/HVAC cell.
+     * @param val - Slot value (0 = off).
+     * @returns CSS `background` property value, or empty string for off.
+     */
     private _paletteCellStyle(val: number): string {
         if (val === 0) return "";
         if (this.slotType === "hvac") {
             if (!this.hvacPresets || val > this.hvacPresets.length) return "";
             return `background: ${this.hvacPresets[val - 1].color}`;
         }
+        if (this.slotType === "brightness") {
+            if (!this.brightnessPresets || val > this.brightnessPresets.length) return "";
+            return `background: ${this.brightnessPresets[val - 1].color}`;
+        }
+        if (this.slotType === "scene") {
+            if (!this.scenePresets || val > this.scenePresets.length) return "";
+            return `background: ${this.scenePresets[val - 1].color}`;
+        }
         if (!this.palette || val > this.palette.length) return "";
         const norm = normalizePaletteEntry(this.palette[val - 1]);
         return `background: ${paletteEntryBackground(norm)}`;
     }
 
+    /** Render the preset/color swatch bar for palette and HVAC modes. */
     private _renderPaletteBar() {
-        const isHvac = this.slotType === "hvac";
-        const swatches = isHvac
-            ? this.hvacPresets.map((p, i) => ({
+        let swatches: { color: string; label: string; tooltip: string; icon?: string; index: number; textColor?: string }[];
+        let maxCount: number;
+
+        if (this.slotType === "hvac") {
+            maxCount = 20;
+            swatches = this.hvacPresets.map((p, i) => ({
                 color: p.color,
                 label: p.alias || this._hvacShortLabel(p),
                 tooltip: this._hvacSwatchTooltip(p),
                 icon: p.icon,
                 index: i + 1,
-            }))
-            : this.palette.map((entry, i) => {
+            }));
+        } else if (this.slotType === "brightness") {
+            maxCount = 20;
+            swatches = this.brightnessPresets.map((p, i) => ({
+                color: p.color,
+                label: `${p.alias || `${Math.round(p.brightness / 255 * 100)}%`}${p.transition === "crossfade" ? " ⇢" : ""}`,
+                tooltip: `${p.alias || `${Math.round(p.brightness / 255 * 100)}%`}${p.transition === "crossfade" ? "\nCross-fade" : ""}`,
+                icon: p.icon,
+                index: i + 1,
+                textColor: _chipTextColor(p.color),
+            }));
+        } else if (this.slotType === "scene") {
+            maxCount = 20;
+            swatches = this.scenePresets.map((p, i) => ({
+                color: p.color,
+                label: p.alias || p.name,
+                tooltip: `${p.alias || p.name}\n${p.scene_id}`,
+                icon: p.icon,
+                index: i + 1,
+            }));
+        } else {
+            maxCount = 10;
+            swatches = this.palette.map((entry, i) => {
                 const norm = normalizePaletteEntry(entry);
                 const badge = norm.mode === "crossfade" ? "⇢"
                     : norm.mode === "cycle" ? "⟳"
@@ -721,9 +880,13 @@ export class ScheduleGrid extends LitElement {
                     index: i + 1,
                 };
             });
+        }
+
+        const canDelete = swatches.length > 1;
+        const canAdd = swatches.length < maxCount;
+
         return html`
       <div class="palette-bar">
-        <span>Paint:</span>
         <div
           class="palette-swatch eraser ${this._activePaletteIndex === 0 ? "active" : ""}"
           title="Eraser"
@@ -732,15 +895,37 @@ export class ScheduleGrid extends LitElement {
         ${swatches.map((s) => html`
           <div
             class="palette-swatch ${this._activePaletteIndex === s.index ? "active" : ""}"
-            style="background: ${s.color}"
+            style="background: ${s.color}${s.textColor ? `; color: ${s.textColor}` : ""}"
             title="${s.tooltip}"
             @click=${() => { this._activePaletteIndex = s.index; }}
-          >${s.icon ? html`<mdi-icon .icon=${s.icon} style="--mdi-icon-size:16px"></mdi-icon>` : ""}</div>
+            @dblclick=${(e: Event) => {
+                e.preventDefault();
+                this.dispatchEvent(new CustomEvent("preset-edit", { detail: { index: s.index - 1 } }));
+            }}
+          >${html`<button class="swatch-edit" @click=${(e: Event) => {
+                e.stopPropagation();
+                this.dispatchEvent(new CustomEvent("preset-edit", { detail: { index: s.index - 1 } }));
+            }}>✏</button>`}${s.icon ? html`<mdi-icon .icon=${s.icon} style="--mdi-icon-size:16px"></mdi-icon>` : ""}${canDelete ? html`<button class="swatch-remove" @click=${(e: Event) => {
+                e.stopPropagation();
+                this.dispatchEvent(new CustomEvent("preset-delete", { detail: { index: s.index - 1 } }));
+            }}>✕</button>` : ""}</div>
         `)}
+        ${canAdd ? html`
+          <div
+            class="palette-swatch palette-swatch-add"
+            title="Add preset"
+            @click=${() => { this.dispatchEvent(new CustomEvent("preset-add")); }}
+          >+</div>
+        ` : ""}
       </div>
     `;
     }
 
+    /**
+     * Short label for an HVAC preset swatch.
+     * @param preset - HVAC preset object.
+     * @returns Compact string like "22° | cool | auto".
+     */
     private _hvacShortLabel(preset: HvacPreset): string {
         const parts: string[] = [];
         if (preset.temperature !== null) parts.push(`${preset.temperature}°`);
@@ -749,6 +934,11 @@ export class ScheduleGrid extends LitElement {
         return parts.join(" | ") || "Preset";
     }
 
+    /**
+     * Tooltip for an HVAC preset swatch.
+     * @param preset - HVAC preset object.
+     * @returns Multi-line tooltip string.
+     */
     private _hvacSwatchTooltip(preset: HvacPreset): string {
         const lines: string[] = [];
         if (preset.alias) lines.push(preset.alias);
@@ -758,6 +948,7 @@ export class ScheduleGrid extends LitElement {
         return lines.join("\n");
     }
 
+    /** Render the "now" time indicator line on the desktop grid. */
     private _renderTimeIndicator() {
         if (this._timeIndicatorLeft === null) return nothing;
         const h = Math.floor(this._nowMinutes / 60);
@@ -771,6 +962,7 @@ export class ScheduleGrid extends LitElement {
     `;
     }
 
+    /** Render the "now" time indicator on the mobile grid. */
     private _renderMobileTimeIndicator() {
         if (!this._mobileTimePos) return nothing;
         const h = Math.floor(this._nowMinutes / 60);
@@ -783,6 +975,11 @@ export class ScheduleGrid extends LitElement {
     `;
     }
 
+    /**
+     * Check whether a cell falls within the current drag rectangle.
+     * @param row - Row index to test.
+     * @param col - Column index to test.
+     */
     private _isInDragRegion(row: number, col: number): boolean {
         if (!this._dragActive) return false;
         const r0 = Math.min(this._dragStartRow, this._dragEndRow);
@@ -792,11 +989,12 @@ export class ScheduleGrid extends LitElement {
         return row >= r0 && row <= r1 && col >= c0 && col <= c1;
     }
 
+    /** Start a drag operation, determining paint vs erase from the initial cell. */
     private _onMouseDown(e: MouseEvent, row: number, col: number, dayKey: string) {
         e.preventDefault();
         const daySlots = this.slots[dayKey] ?? new Array(SLOTS_PER_DAY).fill(0);
         const slotIdx = this._isMobile ? row * MOBILE_SLOTS_PER_ROW + col : col;
-        if (this.slotType === "color" || this.slotType === "hvac") {
+        if (this.slotType === "color" || this.slotType === "hvac" || this.slotType === "brightness" || this.slotType === "scene") {
             this._dragValue = daySlots[slotIdx] === this._activePaletteIndex ? 0 : this._activePaletteIndex;
         } else {
             this._dragValue = daySlots[slotIdx] ? 0 : 1;
@@ -808,18 +1006,21 @@ export class ScheduleGrid extends LitElement {
         this._dragActive = true;
     }
 
+    /** Extend the drag rectangle as the cursor moves. */
     private _onMouseEnter(_e: MouseEvent, row: number, col: number) {
         if (!this._dragActive) return;
         this._dragEndRow = row;
         this._dragEndCol = col;
     }
 
+    /** Finalize the drag and apply changes on mouse release. */
     private _onMouseUp() {
         if (!this._dragActive) return;
         this._applyDrag();
         this._dragActive = false;
     }
 
+    /** Start a touch drag or record a tap target for single-cell toggle. */
     private _onTouchStart(e: TouchEvent, row: number, col: number, dayKey: string) {
         if (this._isMobile && !this._mobilePaintMode) {
             const touch = e.touches[0];
@@ -831,7 +1032,7 @@ export class ScheduleGrid extends LitElement {
         e.preventDefault();
         const daySlots = this.slots[dayKey] ?? new Array(SLOTS_PER_DAY).fill(0);
         const slotIdx = this._isMobile ? row * MOBILE_SLOTS_PER_ROW + col : col;
-        if (this.slotType === "color" || this.slotType === "hvac") {
+        if (this.slotType === "color" || this.slotType === "hvac" || this.slotType === "brightness" || this.slotType === "scene") {
             this._dragValue = daySlots[slotIdx] === this._activePaletteIndex ? 0 : this._activePaletteIndex;
         } else {
             this._dragValue = daySlots[slotIdx] ? 0 : 1;
@@ -843,6 +1044,7 @@ export class ScheduleGrid extends LitElement {
         this._dragActive = true;
     }
 
+    /** Track touch movement to extend drag or cancel a tap. */
     private _onTouchMove(e: TouchEvent) {
         if (this._isMobile && !this._mobilePaintMode) {
             if (this._tapTarget) {
@@ -862,6 +1064,7 @@ export class ScheduleGrid extends LitElement {
         }
     }
 
+    /** Finalize a touch drag or apply a single-cell tap toggle. */
     private _onTouchEnd() {
         if (this._isMobile && !this._mobilePaintMode) {
             if (this._tapTarget) {
@@ -875,6 +1078,7 @@ export class ScheduleGrid extends LitElement {
         this._dragActive = false;
     }
 
+    /** Commit the current drag selection to slot data and fire slots-changed. */
     private _applyDrag() {
         const r0 = Math.min(this._dragStartRow, this._dragEndRow);
         const r1 = Math.max(this._dragStartRow, this._dragEndRow);
@@ -917,6 +1121,10 @@ export class ScheduleGrid extends LitElement {
         );
     }
 
+    /**
+     * Set all slots across all days to a single value.
+     * @param value - Slot value to fill (0 = off, 1 = on or palette index).
+     */
     private _bulkSet(value: number) {
         const dayKeys = this.cadence === "custom" ? this.customDates : this._dayKeys;
         const newSlots: Record<string, number[]> = {};
@@ -932,6 +1140,7 @@ export class ScheduleGrid extends LitElement {
         );
     }
 
+    /** Copy Monday's slot data to all other weekdays. */
     private _copyMondayToAll() {
         const monday = this.slots["0"] ?? new Array(SLOTS_PER_DAY).fill(0);
         const newSlots: Record<string, number[]> = {};
@@ -947,10 +1156,12 @@ export class ScheduleGrid extends LitElement {
         );
     }
 
+    /** Navigate to the previous page of custom cadence days. */
     private _prevPage() {
         this._page = Math.max(0, this._page - 1);
     }
 
+    /** Navigate to the next page of custom cadence days. */
     private _nextPage() {
         this._page = Math.min(this._totalPages - 1, this._page + 1);
     }

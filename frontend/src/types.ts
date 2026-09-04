@@ -1,3 +1,4 @@
+/** HVAC preset configuration for a single climate state. */
 export interface HvacPreset {
     temperature: number | null;
     hvac_mode: string | null;
@@ -7,8 +8,28 @@ export interface HvacPreset {
     icon?: string;
 }
 
+/** Brightness preset configuration. */
+export interface BrightnessPreset {
+    brightness: number;
+    color: string;
+    alias?: string;
+    icon?: string;
+    transition?: "snap" | "crossfade";
+}
+
+/** Scene preset configuration. */
+export interface ScenePreset {
+    scene_id: string;
+    name: string;
+    color: string;
+    alias?: string;
+    icon?: string;
+}
+
+/** Palette entry animation mode. */
 export type PaletteMode = "solid" | "crossfade" | "cycle" | "tv";
 
+/** Structured palette entry with animation mode and optional cycle config. */
 export interface PaletteEntryObject {
     mode: PaletteMode;
     color: string;
@@ -18,13 +39,24 @@ export interface PaletteEntryObject {
     alias?: string;
 }
 
+/** A palette entry — either a bare hex color string or a structured object. */
 export type PaletteEntry = string | PaletteEntryObject;
 
+/**
+ * Normalize a palette entry into object form.
+ * @param entry - Hex string or palette entry object.
+ * @returns Object with at least `mode` and `color`.
+ */
 export function normalizePaletteEntry(entry: PaletteEntry): PaletteEntryObject {
     if (typeof entry === "string") return { mode: "solid", color: entry };
     return entry;
 }
 
+/**
+ * Extract the display color from a palette entry.
+ * @param entry - Hex string or palette entry object.
+ * @returns Hex color string.
+ */
 export function paletteEntryDisplayColor(entry: PaletteEntry): string {
     return typeof entry === "string" ? entry : entry.color;
 }
@@ -64,6 +96,7 @@ export function paletteEntryBackground(entry: PaletteEntryObject): string {
     }
 }
 
+/** A single schedule with full slot data. */
 export interface Schedule {
     id: string;
     name: string;
@@ -78,6 +111,7 @@ export interface Schedule {
     slots: Record<string, number[]>;
 }
 
+/** Schedule summary without slot data, used in list views. */
 export interface ScheduleSummary {
     id: string;
     name: string;
@@ -88,6 +122,7 @@ export interface ScheduleSummary {
     slot_type: string;
 }
 
+/** Conflict info returned when saving a schedule that overlaps another. */
 export interface Conflict {
     schedule_id: string;
     schedule_name: string;
@@ -95,6 +130,7 @@ export interface Conflict {
     conflicting_slot_count: number;
 }
 
+/** Minimal Home Assistant interface used by this panel. */
 export interface HomeAssistant {
     connection: {
         sendMessagePromise(msg: Record<string, unknown>): Promise<any>;
@@ -103,6 +139,7 @@ export interface HomeAssistant {
     states: Record<string, any>;
 }
 
+/** Runtime override and scheduled state data for a schedule's entities. */
 export interface EntityOverrides {
     overrides: Record<string, string>;
     scheduled_states: Record<string, string>;

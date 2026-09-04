@@ -1,6 +1,7 @@
 import { LitElement, html, css } from "lit";
 import { customElement, property } from "lit/decorators.js";
 
+/** Auto-dismissing toast notification anchored to the top-right corner. */
 @customElement("toast-notification")
 export class ToastNotification extends LitElement {
     @property({ type: String }) message = "";
@@ -54,6 +55,11 @@ export class ToastNotification extends LitElement {
     `;
     }
 
+    /**
+     * Show a toast message that auto-dismisses after 5 seconds.
+     * @param message - Text to display.
+     * @param type - Visual style: "info", "warning", or "error".
+     */
     show(message: string, type: "info" | "warning" | "error" = "info") {
         if (this._timer) clearTimeout(this._timer);
         this.message = message;
@@ -62,6 +68,7 @@ export class ToastNotification extends LitElement {
         this._timer = setTimeout(() => this.dismiss(), 5000);
     }
 
+    /** Hide the toast and cancel the auto-dismiss timer. */
     dismiss() {
         this.visible = false;
         if (this._timer) {

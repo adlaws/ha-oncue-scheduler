@@ -205,8 +205,9 @@ async def test_ws_save_detects_conflict(hass, connection, mock_store):
 
     hass.data[DOMAIN] = {"test_entry": OnCueData(store=mock_store, coordinator=MagicMock())}
 
-    # Save second schedule: switch.lamp OFF at midnight (conflict)
-    slots2 = [0] * 96  # slot 0 is OFF, conflicting with Schedule A's ON
+    # Save second schedule: switch.lamp ON at midnight (both active = conflict)
+    slots2 = [0] * 96
+    slots2[0] = 1  # Both schedules active at slot 0
     await ws_save_schedule(hass, connection, {
         "id": 1,
         "type": "oncue_scheduler/save",

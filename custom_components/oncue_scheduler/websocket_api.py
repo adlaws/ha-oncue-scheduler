@@ -24,7 +24,16 @@ _LOGGER = logging.getLogger(__name__)
 def _find_conflicts(
     store: Any, schedule_data: dict[str, Any]
 ) -> list[dict[str, Any]]:
-    """Detect conflicts between the given schedule and all other active schedules."""
+    """Detect conflicts between the given schedule and other active schedules.
+
+    Two schedules conflict when they share entities and both have non-zero
+    slot values at the same time position.
+
+    :param store: ScheduleStore instance to query existing schedules.
+    :param schedule_data: The schedule being saved (may be new or updated).
+    :returns: List of conflict dicts with schedule_id, schedule_name,
+        overlapping_entities, and conflicting_slot_count.
+    """
     conflicts: list[dict[str, Any]] = []
     save_entities = set(schedule_data.get("entity_ids", []))
     save_id = schedule_data.get("id")
@@ -40,9 +49,8 @@ def _find_conflicts(
 
         other_slots = other.get("slots", {})
         other_cadence = other.get("cadence")
-        conflicting_slots: list[dict[str, Any]] = []
+        conflict_count = 0
 
-        # Build pairs of (save_day_key, other_day_key) to compare
         pairs = _build_comparison_pairs(
             save_cadence, save_slots, other_cadence, other_slots
         )
@@ -50,22 +58,17 @@ def _find_conflicts(
         for save_key, other_key in pairs:
             save_arr = save_slots.get(save_key, [])
             other_arr = other_slots.get(other_key, [])
-            n = min(len(save_arr), len(other_arr))
-            for i in range(n):
-                if save_arr[i] != other_arr[i] and save_arr[i] != 0 and other_arr[i] != 0:
-                    continue
-                if save_arr[i] != other_arr[i]:
-                    conflicting_slots.append(
-                        {"day": save_key, "slot": i}
-                    )
+            for s, o in zip(save_arr, other_arr):
+                if s and o:
+                    conflict_count += 1
 
-        if conflicting_slots:
+        if conflict_count:
             conflicts.append(
                 {
                     "schedule_id": other["id"],
                     "schedule_name": other.get("name", ""),
                     "overlapping_entities": sorted(overlap_entities),
-                    "conflicting_slot_count": len(conflicting_slots),
+                    "conflicting_slot_count": conflict_count,
                 }
             )
 
@@ -78,7 +81,17 @@ def _build_comparison_pairs(
     cadence_b: str,
     slots_b: dict[str, list[int]],
 ) -> list[tuple[str, str]]:
-    """Build day-key pairs for cross-cadence comparison."""
+    """Build day-key pairs for cross-cadence slot comparison.
+
+    Maps day keys from two schedules with potentially different cadences
+    into pairs that should be compared for overlapping slots.
+
+    :param cadence_a: Cadence of the first schedule.
+    :param slots_a: Slot data of the first schedule, keyed by day.
+    :param cadence_b: Cadence of the second schedule.
+    :param slots_b: Slot data of the second schedule, keyed by day.
+    :returns: List of (key_a, key_b) tuples to compare pairwise.
+    """
     pairs: list[tuple[str, str]] = []
 
     if cadence_a == CADENCE_DAILY and cadence_b == CADENCE_DAILY:
@@ -116,8 +129,17 @@ def _build_comparison_pairs(
     return pairs
 
 
+_WS_REGISTERED = "oncue_scheduler_ws_registered"
+
+
 def async_register_websocket_api(hass: HomeAssistant) -> None:
-    """Register all WebSocket commands."""
+    """Register all WebSocket commands (idempotent).
+
+    :param hass: Home Assistant instance.
+    """
+    if hass.data.get(_WS_REGISTERED):
+        return
+    hass.data[_WS_REGISTERED] = True
     websocket_api.async_register_command(hass, ws_list_schedules)
     websocket_api.async_register_command(hass, ws_get_schedule)
     websocket_api.async_register_command(hass, ws_save_schedule)
@@ -134,6 +156,14 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_save_color_presets)
     websocket_api.async_register_command(hass, ws_delete_color_preset)
     websocket_api.async_register_command(hass, ws_color_preset_usage)
+    websocket_api.async_register_command(hass, ws_get_brightness_presets)
+    websocket_api.async_register_command(hass, ws_save_brightness_presets)
+    websocket_api.async_register_command(hass, ws_delete_brightness_preset)
+    websocket_api.async_register_command(hass, ws_brightness_preset_usage)
+    websocket_api.async_register_command(hass, ws_get_scene_presets)
+    websocket_api.async_register_command(hass, ws_save_scene_presets)
+    websocket_api.async_register_command(hass, ws_delete_scene_preset)
+    websocket_api.async_register_command(hass, ws_scene_preset_usage)
 
 
 @websocket_api.websocket_command(
@@ -147,6 +177,12 @@ def ws_list_schedules(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
+    """Return summaries of all schedules.
+
+    :param hass: Home Assistant instance.
+    :param connection: Active WebSocket connection.
+    :param msg: Incoming message dict.
+    """
     entry_id = _get_entry_id(hass)
     if entry_id is None:
         connection.send_error(msg["id"], "not_found", "Integration not configured")
@@ -167,6 +203,12 @@ def ws_get_schedule(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
+    """Return a single schedule with full slot data.
+
+    :param hass: Home Assistant instance.
+    :param connection: Active WebSocket connection.
+    :param msg: Incoming message dict.
+    """
     entry_id = _get_entry_id(hass)
     if entry_id is None:
         connection.send_error(msg["id"], "not_found", "Integration not configured")
@@ -191,6 +233,12 @@ async def ws_save_schedule(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
+    """Save a schedule, returning conflicts and warnings.
+
+    :param hass: Home Assistant instance.
+    :param connection: Active WebSocket connection.
+    :param msg: Incoming message dict.
+    """
     entry_id = _get_entry_id(hass)
     if entry_id is None:
         connection.send_error(msg["id"], "not_found", "Integration not configured")
@@ -225,6 +273,12 @@ async def ws_delete_schedule(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
+    """Delete a schedule by ID.
+
+    :param hass: Home Assistant instance.
+    :param connection: Active WebSocket connection.
+    :param msg: Incoming message dict.
+    """
     entry_id = _get_entry_id(hass)
     if entry_id is None:
         connection.send_error(msg["id"], "not_found", "Integration not configured")
@@ -249,6 +303,12 @@ async def ws_toggle_active(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
+    """Toggle a schedule's active/paused state.
+
+    :param hass: Home Assistant instance.
+    :param connection: Active WebSocket connection.
+    :param msg: Incoming message dict.
+    """
     entry_id = _get_entry_id(hass)
     if entry_id is None:
         connection.send_error(msg["id"], "not_found", "Integration not configured")
@@ -275,6 +335,12 @@ async def ws_set_override(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
+    """Set a runtime on/off override for an entity in a schedule.
+
+    :param hass: Home Assistant instance.
+    :param connection: Active WebSocket connection.
+    :param msg: Incoming message dict.
+    """
     entry_id = _get_entry_id(hass)
     if entry_id is None:
         connection.send_error(msg["id"], "not_found", "Integration not configured")
@@ -299,6 +365,12 @@ async def ws_clear_override(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
+    """Clear a runtime override, reverting to the schedule.
+
+    :param hass: Home Assistant instance.
+    :param connection: Active WebSocket connection.
+    :param msg: Incoming message dict.
+    """
     entry_id = _get_entry_id(hass)
     if entry_id is None:
         connection.send_error(msg["id"], "not_found", "Integration not configured")
@@ -322,6 +394,12 @@ def ws_get_overrides(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
+    """Return overrides, scheduled states, and unavailable entities.
+
+    :param hass: Home Assistant instance.
+    :param connection: Active WebSocket connection.
+    :param msg: Incoming message dict.
+    """
     entry_id = _get_entry_id(hass)
     if entry_id is None:
         connection.send_error(msg["id"], "not_found", "Integration not configured")
@@ -335,7 +413,11 @@ def ws_get_overrides(
 
 
 def _get_entry_id(hass: HomeAssistant) -> str | None:
-    """Get the first (and only) config entry ID for this integration."""
+    """Get the first (and only) config entry ID for this integration.
+
+    :param hass: Home Assistant instance.
+    :returns: Config entry ID string, or None if the integration is not configured.
+    """
     domain_data = hass.data.get(DOMAIN)
     if not domain_data:
         return None
@@ -358,6 +440,12 @@ def ws_get_hvac_presets(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
+    """Return the global HVAC presets list.
+
+    :param hass: Home Assistant instance.
+    :param connection: Active WebSocket connection.
+    :param msg: Incoming message dict.
+    """
     entry_id = _get_entry_id(hass)
     if entry_id is None:
         connection.send_error(msg["id"], "not_found", "Integration not configured")
@@ -378,6 +466,12 @@ async def ws_save_hvac_presets(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
+    """Replace the global HVAC presets list.
+
+    :param hass: Home Assistant instance.
+    :param connection: Active WebSocket connection.
+    :param msg: Incoming message dict.
+    """
     entry_id = _get_entry_id(hass)
     if entry_id is None:
         connection.send_error(msg["id"], "not_found", "Integration not configured")
@@ -403,6 +497,12 @@ async def ws_delete_hvac_preset(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
+    """Delete an HVAC preset by index, remapping schedule slots.
+
+    :param hass: Home Assistant instance.
+    :param connection: Active WebSocket connection.
+    :param msg: Incoming message dict.
+    """
     entry_id = _get_entry_id(hass)
     if entry_id is None:
         connection.send_error(msg["id"], "not_found", "Integration not configured")
@@ -428,6 +528,12 @@ def ws_hvac_preset_usage(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
+    """Return schedules using the HVAC preset at the given index.
+
+    :param hass: Home Assistant instance.
+    :param connection: Active WebSocket connection.
+    :param msg: Incoming message dict.
+    """
     entry_id = _get_entry_id(hass)
     if entry_id is None:
         connection.send_error(msg["id"], "not_found", "Integration not configured")
@@ -450,6 +556,12 @@ def ws_get_color_presets(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
+    """Return the global color presets list.
+
+    :param hass: Home Assistant instance.
+    :param connection: Active WebSocket connection.
+    :param msg: Incoming message dict.
+    """
     entry_id = _get_entry_id(hass)
     if entry_id is None:
         connection.send_error(msg["id"], "not_found", "Integration not configured")
@@ -470,6 +582,12 @@ async def ws_save_color_presets(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
+    """Replace the global color presets list.
+
+    :param hass: Home Assistant instance.
+    :param connection: Active WebSocket connection.
+    :param msg: Incoming message dict.
+    """
     entry_id = _get_entry_id(hass)
     if entry_id is None:
         connection.send_error(msg["id"], "not_found", "Integration not configured")
@@ -495,6 +613,12 @@ async def ws_delete_color_preset(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
+    """Delete a color preset by index, remapping schedule slots.
+
+    :param hass: Home Assistant instance.
+    :param connection: Active WebSocket connection.
+    :param msg: Incoming message dict.
+    """
     entry_id = _get_entry_id(hass)
     if entry_id is None:
         connection.send_error(msg["id"], "not_found", "Integration not configured")
@@ -520,9 +644,247 @@ def ws_color_preset_usage(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
+    """Return schedules using the color preset at the given index.
+
+    :param hass: Home Assistant instance.
+    :param connection: Active WebSocket connection.
+    :param msg: Incoming message dict.
+    """
     entry_id = _get_entry_id(hass)
     if entry_id is None:
         connection.send_error(msg["id"], "not_found", "Integration not configured")
         return
     store = hass.data[DOMAIN][entry_id].store
     connection.send_result(msg["id"], {"schedules": store.color_preset_usage(msg["index"])})
+
+
+# ── Global brightness presets ──
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "oncue_scheduler/get_brightness_presets",
+    }
+)
+@callback
+def ws_get_brightness_presets(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Return the global brightness presets list.
+
+    :param hass: Home Assistant instance.
+    :param connection: Active WebSocket connection.
+    :param msg: Incoming message dict.
+    """
+    entry_id = _get_entry_id(hass)
+    if entry_id is None:
+        connection.send_error(msg["id"], "not_found", "Integration not configured")
+        return
+    store = hass.data[DOMAIN][entry_id].store
+    connection.send_result(msg["id"], {"brightness_presets": store.brightness_presets})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "oncue_scheduler/save_brightness_presets",
+        vol.Required("brightness_presets"): list,
+    }
+)
+@websocket_api.async_response
+async def ws_save_brightness_presets(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Replace the global brightness presets list.
+
+    :param hass: Home Assistant instance.
+    :param connection: Active WebSocket connection.
+    :param msg: Incoming message dict.
+    """
+    entry_id = _get_entry_id(hass)
+    if entry_id is None:
+        connection.send_error(msg["id"], "not_found", "Integration not configured")
+        return
+    store = hass.data[DOMAIN][entry_id].store
+    try:
+        saved = await store.async_save_brightness_presets(msg["brightness_presets"])
+    except ValueError as err:
+        connection.send_error(msg["id"], "invalid_format", str(err))
+        return
+    connection.send_result(msg["id"], {"brightness_presets": saved})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "oncue_scheduler/delete_brightness_preset",
+        vol.Required("index"): int,
+    }
+)
+@websocket_api.async_response
+async def ws_delete_brightness_preset(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Delete a brightness preset by index, remapping schedule slots.
+
+    :param hass: Home Assistant instance.
+    :param connection: Active WebSocket connection.
+    :param msg: Incoming message dict.
+    """
+    entry_id = _get_entry_id(hass)
+    if entry_id is None:
+        connection.send_error(msg["id"], "not_found", "Integration not configured")
+        return
+    store = hass.data[DOMAIN][entry_id].store
+    try:
+        presets = await store.async_delete_brightness_preset(msg["index"])
+    except ValueError as err:
+        connection.send_error(msg["id"], "invalid_format", str(err))
+        return
+    connection.send_result(msg["id"], {"brightness_presets": presets})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "oncue_scheduler/brightness_preset_usage",
+        vol.Required("index"): int,
+    }
+)
+@callback
+def ws_brightness_preset_usage(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Return schedules using the brightness preset at the given index.
+
+    :param hass: Home Assistant instance.
+    :param connection: Active WebSocket connection.
+    :param msg: Incoming message dict.
+    """
+    entry_id = _get_entry_id(hass)
+    if entry_id is None:
+        connection.send_error(msg["id"], "not_found", "Integration not configured")
+        return
+    store = hass.data[DOMAIN][entry_id].store
+    connection.send_result(msg["id"], {"schedules": store.brightness_preset_usage(msg["index"])})
+
+
+# ── Global scene presets ──
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "oncue_scheduler/get_scene_presets",
+    }
+)
+@callback
+def ws_get_scene_presets(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Return the global scene presets list.
+
+    :param hass: Home Assistant instance.
+    :param connection: Active WebSocket connection.
+    :param msg: Incoming message dict.
+    """
+    entry_id = _get_entry_id(hass)
+    if entry_id is None:
+        connection.send_error(msg["id"], "not_found", "Integration not configured")
+        return
+    store = hass.data[DOMAIN][entry_id].store
+    connection.send_result(msg["id"], {"scene_presets": store.scene_presets})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "oncue_scheduler/save_scene_presets",
+        vol.Required("scene_presets"): list,
+    }
+)
+@websocket_api.async_response
+async def ws_save_scene_presets(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Replace the global scene presets list.
+
+    :param hass: Home Assistant instance.
+    :param connection: Active WebSocket connection.
+    :param msg: Incoming message dict.
+    """
+    entry_id = _get_entry_id(hass)
+    if entry_id is None:
+        connection.send_error(msg["id"], "not_found", "Integration not configured")
+        return
+    store = hass.data[DOMAIN][entry_id].store
+    try:
+        saved = await store.async_save_scene_presets(msg["scene_presets"])
+    except ValueError as err:
+        connection.send_error(msg["id"], "invalid_format", str(err))
+        return
+    connection.send_result(msg["id"], {"scene_presets": saved})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "oncue_scheduler/delete_scene_preset",
+        vol.Required("index"): int,
+    }
+)
+@websocket_api.async_response
+async def ws_delete_scene_preset(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Delete a scene preset by index, remapping schedule slots.
+
+    :param hass: Home Assistant instance.
+    :param connection: Active WebSocket connection.
+    :param msg: Incoming message dict.
+    """
+    entry_id = _get_entry_id(hass)
+    if entry_id is None:
+        connection.send_error(msg["id"], "not_found", "Integration not configured")
+        return
+    store = hass.data[DOMAIN][entry_id].store
+    try:
+        presets = await store.async_delete_scene_preset(msg["index"])
+    except ValueError as err:
+        connection.send_error(msg["id"], "invalid_format", str(err))
+        return
+    connection.send_result(msg["id"], {"scene_presets": presets})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "oncue_scheduler/scene_preset_usage",
+        vol.Required("index"): int,
+    }
+)
+@callback
+def ws_scene_preset_usage(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Return schedules using the scene preset at the given index.
+
+    :param hass: Home Assistant instance.
+    :param connection: Active WebSocket connection.
+    :param msg: Incoming message dict.
+    """
+    entry_id = _get_entry_id(hass)
+    if entry_id is None:
+        connection.send_error(msg["id"], "not_found", "Integration not configured")
+        return
+    store = hass.data[DOMAIN][entry_id].store
+    connection.send_result(msg["id"], {"schedules": store.scene_preset_usage(msg["index"])})
