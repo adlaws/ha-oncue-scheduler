@@ -4,6 +4,7 @@ import { sharedStyles } from "./styles";
 import type { Schedule, ScheduleSummary, HomeAssistant, HvacPreset, PaletteEntry, BrightnessPreset, ScenePreset } from "./types";
 import "./schedule-list";
 import "./schedule-editor";
+import "./mdi-icon";
 
 /** Top-level panel component — sidebar schedule list + main editor area. */
 @customElement("oncue-scheduler-panel")
@@ -26,12 +27,47 @@ export class OnCuePanel extends LitElement {
         sharedStyles,
         css`
       :host {
-        display: block;
+        display: flex;
+        flex-direction: column;
         height: calc(100vh - var(--header-height, 56px));
       }
-      .layout {
+      .panel-toolbar {
         display: flex;
-        height: 100%;
+        align-items: center;
+        gap: 8px;
+        height: 56px;
+        flex-shrink: 0;
+        padding: 0 4px;
+        box-sizing: border-box;
+        background: var(--app-header-background-color, var(--ss-primary));
+        color: var(--app-header-text-color, #fff);
+      }
+      .panel-toolbar .title {
+        flex: 1;
+        min-width: 0;
+        font-size: 20px;
+        font-weight: 400;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .toolbar-button {
+        background: none;
+        color: inherit;
+        width: 40px;
+        height: 40px;
+        padding: 0;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+      }
+      .layout {
+        position: relative;
+        display: flex;
+        flex: 1;
+        min-height: 0;
       }
       .sidebar {
         width: var(--ss-sidebar-width);
@@ -53,36 +89,19 @@ export class OnCuePanel extends LitElement {
         min-width: 0;
         overflow: hidden;
       }
-      .toggle-sidebar {
-        position: fixed;
-        bottom: 16px;
-        left: 16px;
-        z-index: 10;
-        border-radius: 50%;
-        width: 40px;
-        height: 40px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 18px;
-        background: var(--ss-primary);
-        color: #fff;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-        padding: 0;
-      }
       .loading {
         display: flex;
         align-items: center;
         justify-content: center;
-        height: 100%;
+        flex: 1;
         color: var(--secondary-text-color, #727272);
         font-size: 16px;
       }
 
       @media (max-width: 768px) {
         .sidebar {
-          position: fixed;
-          top: var(--header-height, 56px);
+          position: absolute;
+          top: 0;
           left: 0;
           bottom: 0;
           z-index: 5;
@@ -103,10 +122,14 @@ export class OnCuePanel extends LitElement {
 
     render() {
         if (this._loading) {
-            return html`<div class="loading">Loading schedules...</div>`;
+            return html`
+        ${this._renderToolbar()}
+        <div class="loading">Loading schedules...</div>
+      `;
         }
 
         return html`
+      ${this._renderToolbar()}
       <div class="layout">
         <div class="sidebar ${this._sidebarOpen ? "" : "collapsed"}">
           <schedule-list
@@ -136,13 +159,42 @@ export class OnCuePanel extends LitElement {
           ></schedule-editor>
         </div>
       </div>
-      ${this.narrow
-                ? html`
-            <button class="toggle-sidebar" @click=${this._toggleSidebar}>
-              ${this._sidebarOpen ? "✕" : "☰"}
-            </button>
-          `
-                : nothing}
+    `;
+    }
+
+    /** Ask the Home Assistant frontend to open its main sidebar. */
+    private _openHassMenu() {
+        this.dispatchEvent(
+            new CustomEvent("hass-toggle-menu", { bubbles: true, composed: true }),
+        );
+    }
+
+    /**
+     * Toolbar shown on narrow screens, where the Home Assistant sidebar is
+     * hidden and the panel would otherwise have no way back out.
+     */
+    private _renderToolbar() {
+        if (!this.narrow) return nothing;
+        return html`
+      <div class="panel-toolbar">
+        <button
+          class="toolbar-button"
+          title="Home Assistant menu"
+          aria-label="Open Home Assistant menu"
+          @click=${this._openHassMenu}
+        >
+          <mdi-icon icon="mdi:menu"></mdi-icon>
+        </button>
+        <div class="title">OnCue Scheduler</div>
+        <button
+          class="toolbar-button"
+          title="Schedules"
+          aria-label=${this._sidebarOpen ? "Hide schedule list" : "Show schedule list"}
+          @click=${this._toggleSidebar}
+        >
+          <mdi-icon icon=${this._sidebarOpen ? "mdi:close" : "mdi:format-list-bulleted"}></mdi-icon>
+        </button>
+      </div>
     `;
     }
 
